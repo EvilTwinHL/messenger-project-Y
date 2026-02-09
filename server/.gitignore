@@ -1,0 +1,5 @@
+node_modules/
+uploads/
+chat.db
+ngrok.exe
+.env

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Мій Месенджер (Web)</title>
+    <style> body { font-family: sans-serif; padding: 20px; } </style>
+</head>
+<body>
+    <h2>💻 Чат на Ноутбуці</h2>
+    <div id="chat" style="height: 300px; border: 1px solid #ccc; overflow-y: scroll; padding: 10px; margin-bottom: 10px;"></div>
+    <input id="msg" type="text" placeholder="Напишіть повідомлення..." style="width: 70%;">
+    <button onclick="send()">Надіслати</button>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        // Коли отримуємо повідомлення
+        socket.on('receive_message', (data) => {
+            const chat = document.getElementById('chat');
+            const sender = data.sender || 'Анонім';
+            const text = data.text || JSON.stringify(data);
+            chat.innerHTML += `<p><b>${sender}:</b> ${text}</p>`;
+        });
+
+        // Функція відправки
+        function send() {
+            const input = document.getElementById('msg');
+            const text = input.value;
+            if(text) {
+                // Відправляємо на сервер
+                socket.emit('send_message', { text: text, sender: 'Laptop' });
+                
+                // Додаємо собі на екран
+                document.getElementById('chat').innerHTML += `<p><b>Я:</b> ${text}</p>`;
+                input.value = '';
+            }
+        }
+    </script>
+</body>
+</html>
