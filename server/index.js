@@ -95,6 +95,7 @@ io.on('connection', (socket) => {
 });
 
 app.get('/ping', (req, res) => {
+  console.log('--- [CRON] Пінгування отримано! ---');
   res.status(200).send('Server is alive!');
 });
 
