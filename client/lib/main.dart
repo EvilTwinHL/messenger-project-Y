@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 // --- НАЛАШТУВАННЯ ---
 // Впишіть сюди IP вашого ноутбука (з команди ipconfig)!
 const String serverUrl =
-    'https://josphine-separatory-zoie.ngrok-free.dev'; // <--- ЗМІНІТЬ ЦЕ НА ВАШУ IP
+    'https://pproject-y.onrender.com'; // <--- ЗМІНІТЬ ЦЕ НА ВАШУ IP
 //const int serverPort = 3000;
 //const String serverUrl = 'http://$serverIp:$serverPort';
 
