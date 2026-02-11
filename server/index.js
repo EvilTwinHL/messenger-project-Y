@@ -94,6 +94,8 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(3000, '0.0.0.0', () => {
-    console.log('✅ Сервер з підтримкою фото запущено!');
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+    console.log(`✅ Сервер запущено на порті ${PORT}`);
 });
