@@ -3,3 +3,4 @@ uploads/
 chat.db
 ngrok.exe
 .env
+serviceAccountKey.json
