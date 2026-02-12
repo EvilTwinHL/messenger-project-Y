@@ -147,6 +147,11 @@ io.on('connection', async (socket) => {
     });
 });
 
+app.get('/ping', (req, res) => {
+  console.log('--- [CRON] Пінгування отримано! ---');
+  res.status(200).send('Server is alive!');
+});
+
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
