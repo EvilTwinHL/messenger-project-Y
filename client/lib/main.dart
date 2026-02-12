@@ -1,18 +1,39 @@
 import 'dart:convert';
-import 'dart:io'; // Додано для визначення Windows/Android
+import 'dart:io'; // Для перевірки платформи
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:shorebird_code_push/shorebird_code_push.dart'; // 📦 Бібліотека оновлень
+// 🔥 НОВІ БІБЛІОТЕКИ ДЛЯ ПУШІВ
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 // --- НАЛАШТУВАННЯ ---
-// Впишіть сюди IP вашого ноутбука (з команди ipconfig)!
-const String serverUrl =
-    'https://pproject-y.onrender.com'; // <--- ЗМІНІТЬ ЦЕ НА ВАШУ IP
-//const int serverPort = 3000;
-//const String serverUrl = 'http://$serverIp:$serverPort';
+const String serverUrl = 'https://pproject-y.onrender.com';
 
-void main() {
+// 🔥 ФОНОВИЙ ОБРОБНИК (Має бути поза класом MyApp!)
+// Працює, коли додаток закритий або згорнутий
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  print("🌙 Фонове повідомлення: ${message.notification?.title}");
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Ініціалізація Firebase (тільки для Android/iOS)
+  if (Platform.isAndroid || Platform.isIOS) {
+    try {
+      await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
+      print("✅ Firebase ініціалізовано");
+    } catch (e) {
+      print("❌ Помилка ініціалізації Firebase: $e");
+    }
+  }
+
   runApp(const MyApp());
 }
 
@@ -22,9 +43,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false, // Прибираємо стрічку "Debug"
+      debugShowCheckedModeBanner: false,
       title: 'Мій Крос-Месенджер',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+      theme: ThemeData(primarySwatch: Colors.indigo, useMaterial3: true),
       home: const ChatScreen(),
     );
   }
@@ -38,22 +59,191 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  // --- Змінні чату ---
   List<Map<String, dynamic>> messages = [];
   final TextEditingController textController = TextEditingController();
   late IO.Socket socket;
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
-
-  // Визначаємо ім'я цього пристрою при старті
-  // Якщо це Android - буде "Мій Телефон", якщо Windows - "Мій PC"
   final String myName = Platform.isAndroid ? 'Мій Телефон' : 'Мій PC';
+
+  // --- Інструмент оновлення (Shorebird) ---
+  final _updater = ShorebirdUpdater();
+  bool _isCheckingForUpdate = false;
 
   @override
   void initState() {
     super.initState();
     initSocket();
+
+    // Запускаємо налаштування пушів (тільки на Android)
+    if (Platform.isAndroid) {
+      setupPushNotifications();
+    }
+
+    // Виводимо версію патчу (для контролю)
+    _updater.readCurrentPatch().then((currentPatch) {
+      print('Поточний номер патчу: ${currentPatch?.number ?? "Немає (База)"}');
+    });
   }
 
+  // --- 🔔 ЛОГІКА ПУШІВ (Push Notifications) 🔔 ---
+  Future<void> setupPushNotifications() async {
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+    // 1. Питаємо дозвіл (важливо для Android 13+)
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      print('✅ Дозвіл на сповіщення отримано');
+
+      // 2. Отримуємо унікальний токен цього телефону
+      String? token = await messaging.getToken();
+      print("🔑 МІЙ FCM TOKEN: $token");
+
+      // 3. Відправляємо токен на сервер (якщо сокет вже підключений)
+      if (token != null && socket.connected) {
+        socket.emit('register_token', token);
+      }
+
+      // Якщо токен зміниться (наприклад, перевстановили додаток)
+      messaging.onTokenRefresh.listen((newToken) {
+        socket.emit('register_token', newToken);
+      });
+    } else {
+      print('❌ Користувач заборонив сповіщення');
+    }
+
+    // 4. Слухаємо повідомлення, коли додаток ВІДКРИТИЙ (Foreground)
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('🔔 Пуш при відкритому додатку: ${message.notification?.title}');
+
+      // Показуємо красиву плашку
+      if (message.notification != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.notifications_active, color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    "${message.notification!.title}: ${message.notification!.body}",
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green[700],
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+  }
+  // -----------------------------------------------
+
+  // --- ЛОГІКА ОНОВЛЕННЯ (SHOREBIRD) ---
+  Future<void> _checkForUpdate() async {
+    if (!Platform.isAndroid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Авто-оновлення працює тільки на Android"),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isCheckingForUpdate = true);
+
+    try {
+      final status = await _updater.checkForUpdate();
+
+      if (!mounted) return;
+      setState(() => _isCheckingForUpdate = false);
+
+      if (status == UpdateStatus.outdated) {
+        _showUpdateDialog();
+      } else if (status == UpdateStatus.upToDate) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("У вас найсвіжіша версія! ✅")),
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Оновлень не знайдено.")));
+      }
+    } catch (e) {
+      setState(() => _isCheckingForUpdate = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Помилка: $e")));
+    }
+  }
+
+  void _showUpdateDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Доступне оновлення! 🚀"),
+          content: const Text("Знайдено нову версію. Завантажити?"),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Пізніше"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _downloadAndApplyUpdate();
+              },
+              child: const Text("Завантажити"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _downloadAndApplyUpdate() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Завантаження оновлення... ⏳")),
+    );
+
+    try {
+      await _updater.update();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Готово! 🎉"),
+          content: const Text("Оновлення встановлено. Перезапустіть додаток."),
+          actions: [
+            ElevatedButton(
+              onPressed: () => exit(0),
+              child: const Text("Перезапустити"),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Помилка: $e"), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // --- ЛОГІКА ЧАТУ (SOCKET.IO) ---
   void initSocket() {
     socket = IO.io(
       serverUrl,
@@ -62,21 +252,24 @@ class _ChatScreenState extends State<ChatScreen> {
           .disableAutoConnect()
           .build(),
     );
-
     socket.connect();
 
-    socket.onConnect((_) => print('✅ Підключено до сервера як $myName'));
+    socket.onConnect((_) {
+      print('✅ Підключено до сервера');
+      // При підключенні відправляємо токен знову (раптом зв'язок обривався)
+      if (Platform.isAndroid) {
+        FirebaseMessaging.instance.getToken().then((token) {
+          if (token != null) socket.emit('register_token', token);
+        });
+      }
+    });
 
     socket.on('load_history', (data) {
       if (data != null) {
         setState(() {
           messages.clear();
           for (var msg in data) {
-            messages.add({
-              'text': msg['text'],
-              'sender': msg['sender'],
-              'type': msg['type'] ?? 'text',
-            });
+            messages.add(msg);
           }
         });
         _scrollToBottom();
@@ -85,11 +278,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.on('receive_message', (data) {
       setState(() {
-        messages.add({
-          'text': data['text'],
-          'sender': data['sender'],
-          'type': data['type'] ?? 'text',
-        });
+        messages.add(data);
       });
       _scrollToBottom();
     });
@@ -111,30 +300,32 @@ class _ChatScreenState extends State<ChatScreen> {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image == null) return;
 
-    print("📸 Фото обрано: ${image.path}");
-
-    var request = http.MultipartRequest('POST', Uri.parse('$serverUrl/upload'));
-    request.files.add(await http.MultipartFile.fromPath('image', image.path));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text("Завантаження фото...")));
 
     try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$serverUrl/upload'),
+      );
+      request.files.add(await http.MultipartFile.fromPath('image', image.path));
       var response = await request.send();
+
       if (response.statusCode == 200) {
         var responseData = await response.stream.bytesToString();
         var json = jsonDecode(responseData);
         String imageUrl = json['url'];
-
-        // Відправляємо повідомлення з типом image
         socket.emit('send_message', {
           'text': imageUrl,
-          'sender': myName, // Використовуємо авто-ім'я
+          'sender': myName,
           'type': 'image',
         });
       }
     } catch (e) {
-      print("❌ Помилка завантаження: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Помилка з'єднання з сервером: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Помилка: $e")));
     }
   }
 
@@ -143,7 +334,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isNotEmpty) {
       socket.emit('send_message', {
         'text': text,
-        'sender': myName, // Використовуємо авто-ім'я
+        'sender': myName,
         'type': 'text',
       });
       textController.clear();
@@ -162,9 +353,28 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Чат ($myName)"), // У заголовку буде видно, хто ви
+        title: Text("Чат ($myName)"),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
+        actions: [
+          _isCheckingForUpdate
+              ? const Padding(
+                  padding: EdgeInsets.all(12.0),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  ),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.system_update),
+                  tooltip: "Перевірити оновлення",
+                  onPressed: _checkForUpdate,
+                ),
+        ],
       ),
       body: Column(
         children: [
@@ -174,9 +384,9 @@ class _ChatScreenState extends State<ChatScreen> {
               itemCount: messages.length,
               itemBuilder: (context, index) {
                 final msg = messages[index];
-                // Перевіряємо: чи я відправив це повідомлення?
                 final isMe = msg['sender'] == myName;
                 final isImage = msg['type'] == 'image';
+                final String content = msg['text'] ?? '';
 
                 return Align(
                   alignment: isMe
@@ -191,77 +401,35 @@ class _ChatScreenState extends State<ChatScreen> {
                     decoration: BoxDecoration(
                       color: isMe ? Colors.blue[100] : Colors.white,
                       border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(15),
-                        topRight: const Radius.circular(15),
-                        bottomLeft: isMe
-                            ? const Radius.circular(15)
-                            : Radius.zero,
-                        bottomRight: isMe
-                            ? Radius.zero
-                            : const Radius.circular(15),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 5,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      borderRadius: BorderRadius.circular(15),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           msg['sender'],
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: isMe ? Colors.blue[800] : Colors.grey[700],
                           ),
                         ),
                         const SizedBox(height: 5),
-
                         isImage
                             ? SizedBox(
                                 width: 200,
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
                                   child: Image.network(
-                                    '$serverUrl/${msg['text']}',
-                                    fit: BoxFit.cover,
-                                    loadingBuilder:
-                                        (context, child, loadingProgress) {
-                                          if (loadingProgress == null)
-                                            return child;
-                                          return Container(
-                                            height: 100,
-                                            color: Colors.grey[200],
-                                            child: const Center(
-                                              child:
-                                                  CircularProgressIndicator(),
-                                            ),
-                                          );
-                                        },
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return const Column(
-                                        children: [
-                                          Icon(
-                                            Icons.broken_image,
-                                            color: Colors.red,
-                                          ),
-                                          Text(
-                                            "Помилка фото",
-                                            style: TextStyle(fontSize: 10),
-                                          ),
-                                        ],
-                                      );
-                                    },
+                                    content.startsWith('http')
+                                        ? content
+                                        : '$serverUrl/$content',
+                                    errorBuilder: (c, e, s) =>
+                                        const Icon(Icons.broken_image),
                                   ),
                                 ),
                               )
                             : Text(
-                                msg['text'],
+                                content,
                                 style: const TextStyle(fontSize: 16),
                               ),
                       ],
@@ -296,7 +464,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         vertical: 10,
                       ),
                     ),
-                    onSubmitted: (_) => sendMessage(), // Відправка по Enter
+                    onSubmitted: (_) => sendMessage(),
                   ),
                 ),
                 const SizedBox(width: 8),
