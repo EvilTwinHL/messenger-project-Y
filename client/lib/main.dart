@@ -14,7 +14,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 // --- НАЛАШТУВАННЯ ---
 const String serverUrl = 'https://pproject-y.onrender.com';
 
-// 🔥 ФОНОВИЙ ОБРОБНИК (Має бути поза класом MyApp!)
+// 🔥 ФОНОВИЙ ОБРОБНИК
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("🌙 Фонове повідомлення: ${message.notification?.title}");
 }
@@ -22,7 +22,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Ініціалізація Firebase (ТІЛЬКИ для Android/iOS, щоб не ламати Windows)
+  // 1. Ініціалізація Firebase (ТІЛЬКИ для Android/iOS)
   if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
     try {
       await Firebase.initializeApp();
@@ -35,14 +35,11 @@ void main() async {
     }
   }
 
-  // 2. Перевірка: чи користувач вже входив?
+  // 2. Перевірка входу
   final prefs = await SharedPreferences.getInstance();
   final savedUsername = prefs.getString('username');
-  final savedAvatar = prefs.getString(
-    'avatarUrl',
-  ); // 🔥 Читаємо збережену аватарку
+  final savedAvatar = prefs.getString('avatarUrl');
 
-  // Якщо ім'я є - відкриваємо Чат, якщо ні - Логін
   runApp(
     MyApp(
       initialScreen: savedUsername != null
@@ -68,7 +65,7 @@ class MyApp extends StatelessWidget {
 }
 
 // =======================
-// 🔐 ЕКРАН ВХОДУ (LOGIN) + АВАТАР
+// 🔐 ЕКРАН ВХОДУ (ОРИГІНАЛ)
 // =======================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -80,10 +77,9 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
-  File? _avatarFile; // 🔥 Локальний файл аватарки
-  String? _uploadedAvatarUrl; // 🔥 URL після завантаження
+  File? _avatarFile;
+  String? _uploadedAvatarUrl;
 
-  // Вибір фото для аватарки
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
@@ -101,7 +97,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Якщо користувач вибрав фото - спочатку вантажимо його
       if (_avatarFile != null) {
         var request = http.MultipartRequest(
           'POST',
@@ -114,17 +109,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (response.statusCode == 200) {
           var json = jsonDecode(await response.stream.bytesToString());
-          _uploadedAvatarUrl = json['url']; // Отримуємо URL від сервера
+          _uploadedAvatarUrl = json['url'];
         }
       }
 
-      // 2. Відправляємо запит на вхід/реєстрацію (разом з аватаркою)
       final response = await http.post(
         Uri.parse('$serverUrl/auth'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'username': username,
-          'avatarUrl': _uploadedAvatarUrl, // 🔥 Відправляємо null або посилання
+          'avatarUrl': _uploadedAvatarUrl,
         }),
       );
 
@@ -133,7 +127,6 @@ class _LoginScreenState extends State<LoginScreen> {
         final user = responseData['user'];
         final finalAvatarUrl = user['avatarUrl'];
 
-        // 3. Зберігаємо дані в пам'ять телефону
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('username', username);
         if (finalAvatarUrl != null) {
@@ -141,7 +134,6 @@ class _LoginScreenState extends State<LoginScreen> {
         }
 
         if (!mounted) return;
-        // Переходимо в чат
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -175,7 +167,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 🔥 Кнопка вибору аватарки
                 GestureDetector(
                   onTap: _pickAvatar,
                   child: CircleAvatar(
@@ -233,11 +224,11 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ
+// 💬 ЕКРАН ЧАТУ (З ДІАГНОСТИКОЮ)
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
-  final String? avatarUrl; // 🔥 Приймаємо аватарку
+  final String? avatarUrl;
   const ChatScreen({super.key, required this.username, this.avatarUrl});
 
   @override
@@ -245,15 +236,12 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  // --- Змінні ---
   List<Map<String, dynamic>> messages = [];
   final TextEditingController textController = TextEditingController();
   late IO.Socket socket;
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
-
   final _updater = ShorebirdUpdater();
-  bool _isCheckingForUpdate = false;
 
   late String myName;
 
@@ -263,48 +251,75 @@ class _ChatScreenState extends State<ChatScreen> {
     myName = widget.username;
     initSocket();
 
-    // Пуші запускаємо тільки на мобільних
+    // 🔥 Запускаємо пуші з невеликою затримкою, щоб сокет встиг з'єднатися
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-      setupPushNotifications();
+      Future.delayed(const Duration(seconds: 2), setupPushNotifications);
     }
   }
 
-  // --- 🔔 ЛОГІКА ПУШІВ ---
-  Future<void> setupPushNotifications() async {
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(alert: true, badge: true, sound: true);
-
-    String? token = await messaging.getToken();
-    print("🔑 FCM TOKEN: $token");
-
-    if (token != null && socket.connected) {
-      socket.emit('register_token', token);
+  // 🔥 ГОЛОВНА ФУНКЦІЯ ДЛЯ ДІАГНОСТИКИ
+  void _logToServer(String msg) {
+    print("LOG: $msg"); // Друкуємо собі
+    if (socket.connected) {
+      socket.emit('debug_log', "User $myName: $msg"); // Відправляємо на сервер
     }
+  }
 
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('🔔 Пуш при відкритому додатку: ${message.notification?.title}');
-      if (message.notification != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "${message.notification!.title}: ${message.notification!.body}",
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
+  // --- 🔔 ЛОГІКА ПУШІВ (З ЛОГУВАННЯМ) ---
+  Future<void> setupPushNotifications() async {
+    _logToServer("🚀 Починаю налаштування пушів...");
+
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+    try {
+      // 1. Запит дозволу
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      _logToServer("👮 Статус дозволу: ${settings.authorizationStatus}");
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        // 2. Отримання токена
+        String? token = await messaging.getToken();
+
+        if (token != null) {
+          _logToServer("🔑 Токен отримано! Відправляю на сервер...");
+          socket.emit('register_token', token);
+        } else {
+          _logToServer("⚠️ Токен прийшов пустий (null)");
+        }
+      } else {
+        _logToServer("⛔ Користувач ВІДМОВИВ у дозволі на пуші!");
       }
-    });
+
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        _logToServer(
+          "🔔 Прийшло повідомлення при відкритому додатку: ${message.notification?.title}",
+        );
+        if (message.notification != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "${message.notification!.title}: ${message.notification!.body}",
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      _logToServer("❌ КРИТИЧНА ПОМИЛКА ПУШІВ: $e");
+    }
   }
 
   // --- 🔄 Shorebird Оновлення ---
   Future<void> _checkForUpdate() async {
     if (!Platform.isAndroid) return;
-    setState(() => _isCheckingForUpdate = true);
     try {
       final status = await _updater.checkForUpdate();
-      if (!mounted) return;
-      setState(() => _isCheckingForUpdate = false);
-
       if (status == UpdateStatus.outdated) {
         showDialog(
           context: context,
@@ -326,20 +341,16 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         );
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Оновлень немає.")));
       }
     } catch (e) {
-      setState(() => _isCheckingForUpdate = false);
+      // ignore
     }
   }
 
   // --- Вихід (Logout) ---
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // 🔥 Очищаємо все (ім'я та аватарку)
+    await prefs.clear();
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
@@ -360,11 +371,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.onConnect((_) {
       print('✅ Підключено до сервера');
-      if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-        FirebaseMessaging.instance.getToken().then((token) {
-          if (token != null) socket.emit('register_token', token);
-        });
-      }
+      _logToServer("✅ Сокет підключився успішно"); // Логуємо підключення
     });
 
     socket.on('load_history', (data) {
@@ -423,7 +430,7 @@ class _ChatScreenState extends State<ChatScreen> {
     socket.emit('send_message', {
       'text': imageUrl ?? text,
       'sender': myName,
-      'senderAvatar': widget.avatarUrl, // 🔥 Відправляємо своє фото
+      'senderAvatar': widget.avatarUrl,
       'type': type,
     });
     textController.clear();
@@ -441,7 +448,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // 🔥 Показуємо свою аватарку в шапці
         title: Row(
           children: [
             if (widget.avatarUrl != null)
@@ -474,8 +480,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 final isMe = msg['sender'] == myName;
                 final isImage = msg['type'] == 'image';
                 final String content = msg['text'] ?? '';
-                final String? avatar =
-                    msg['senderAvatar']; // 🔥 Аватарка автора повідомлення
+                final String? avatar = msg['senderAvatar'];
 
                 return Padding(
                   padding: const EdgeInsets.symmetric(
@@ -486,10 +491,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     mainAxisAlignment: isMe
                         ? MainAxisAlignment.end
                         : MainAxisAlignment.start,
-                    crossAxisAlignment:
-                        CrossAxisAlignment.end, // Рівняємо по низу
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      // 🔥 Аватарка співрозмовника (тільки якщо не я)
                       if (!isMe) ...[
                         CircleAvatar(
                           radius: 16,
@@ -517,7 +520,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             borderRadius: BorderRadius.only(
                               topLeft: const Radius.circular(15),
                               topRight: const Radius.circular(15),
-                              // Якщо я - хвостик справа, якщо ні - зліва
                               bottomLeft: isMe
                                   ? const Radius.circular(15)
                                   : const Radius.circular(0),
@@ -529,7 +531,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Ім'я показуємо тільки якщо це не я
                               if (!isMe)
                                 Text(
                                   msg['sender'] ?? 'Anon',
