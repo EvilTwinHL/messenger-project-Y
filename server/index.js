@@ -103,7 +103,10 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 });
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { cors: { origin: "*" },
+
+    maxHttpBufferSize: 1e7 // 10 MB (збільшує ліміт передачі даних)
+});
 
 const PORT = process.env.PORT || 3000;
 
