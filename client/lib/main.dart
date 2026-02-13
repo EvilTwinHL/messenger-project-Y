@@ -224,7 +224,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ (З ДІАГНОСТИКОЮ)
+// 💬 ЕКРАН ЧАТУ (З ДІАГНОСТИКОЮ + ФІЛЬТРОМ ПУШІВ)
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -282,14 +282,31 @@ class _ChatScreenState extends State<ChatScreen> {
       _logToServer("👮 Статус дозволу: ${settings.authorizationStatus}");
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-        // 2. Отримання токена
-        String? token = await messaging.getToken();
+        // 🔥 СПРОБА 1
+        String? token;
+        try {
+          token = await messaging.getToken();
+        } catch (e) {
+          _logToServer("⚠️ Помилка 1-ї спроби: $e. Чекаю 5 сек...");
+          // 🔥 СПРОБА 2 (через 5 секунд)
+          await Future.delayed(const Duration(seconds: 5));
+          try {
+            token = await messaging.getToken();
+          } catch (e2) {
+            _logToServer("❌ Помилка 2-ї спроби: $e2");
+          }
+        }
 
         if (token != null) {
           _logToServer("🔑 Токен отримано! Відправляю на сервер...");
-          socket.emit('register_token', token);
+
+          // 🔥 🔥 🔥 ЗМІНА ТУТ: ВІДПРАВЛЯЄМО ІМ'Я РАЗОМ З ТОКЕНОМ
+          socket.emit('register_token', {
+            'token': token,
+            'username': widget.username, // Щоб сервер знав, чий це токен
+          });
         } else {
-          _logToServer("⚠️ Токен прийшов пустий (null)");
+          _logToServer("⚠️ Токен так і не вдалося отримати");
         }
       } else {
         _logToServer("⛔ Користувач ВІДМОВИВ у дозволі на пуші!");
@@ -371,7 +388,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.onConnect((_) {
       print('✅ Підключено до сервера');
-      _logToServer("✅ Сокет підключився успішно"); // Логуємо підключення
+      _logToServer("✅ Сокет підключився успішно");
     });
 
     socket.on('load_history', (data) {

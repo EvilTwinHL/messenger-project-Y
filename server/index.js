@@ -108,7 +108,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Chat Server (with Debug Logs) is Running! 🚀');
+    res.send('Server Running (With Push Filtering) 🚀');
 });
 
 app.get('/ping', (req, res) => {
@@ -119,17 +119,31 @@ app.get('/ping', (req, res) => {
 io.on('connection', async (socket) => {
     console.log(`[CONN] Користувач підключився: ${socket.id}`);
 
-    // 🔥 НОВЕ: Приймаємо логи з телефону і пишемо в консоль сервера
+    // 🔥 Логи з телефону
     socket.on('debug_log', (msg) => {
         console.log(`📱 CLIENT LOG [${socket.id}]:`, msg);
     });
 
-    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА В БД ---
-    socket.on('register_token', async (token) => {
+    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА (ОНОВЛЕНО) ---
+    socket.on('register_token', async (data) => {
+        // Ми очікуємо об'єкт { token: "...", username: "..." }
+        // Але про всяк випадок підтримуємо і старий формат (просто рядок)
+        
+        let token = "";
+        let username = null;
+
+        if (typeof data === 'string') {
+            token = data;
+        } else if (typeof data === 'object' && data.token) {
+            token = data.token;
+            username = data.username;
+        }
+
         if(token) {
-            console.log(`💾 Спроба зберегти токен: ${token.substring(0, 10)}...`);
+            console.log(`💾 Збереження токена для ${username || 'Unknown'}: ${token.substring(0, 10)}...`);
             try {
                 await db.collection('fcm_tokens').doc(token).set({
+                    username: username, // 🔥 Зберігаємо власника токена
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
                 console.log(`✅ Токен успішно записано в БД`);
@@ -167,10 +181,18 @@ io.on('connection', async (socket) => {
         // Б) Відправляємо всім, хто онлайн у чаті
         io.emit('receive_message', data); 
 
-        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ 🔥
+        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ (З ФІЛЬТРОМ) 🔥
         try {
             const tokensSnapshot = await db.collection('fcm_tokens').get();
-            const tokens = tokensSnapshot.docs.map(doc => doc.id);
+            
+            // 🔥 ФІЛЬТРАЦІЯ: Виключаємо токени відправника
+            const tokens = tokensSnapshot.docs
+                .filter(doc => {
+                    const tokenData = doc.data();
+                    // Якщо ім'я в токені співпадає з відправником - пропускаємо
+                    return tokenData.username !== data.sender;
+                })
+                .map(doc => doc.id);
 
             if (tokens.length > 0) {
                 const payload = {
@@ -182,7 +204,9 @@ io.on('connection', async (socket) => {
                 };
                 
                 const response = await admin.messaging().sendEachForMulticast(payload);
-                console.log(`🔔 Пуш розіслано: ${response.successCount}/${tokens.length}`);
+                console.log(`🔔 Пуш розіслано: ${response.successCount} (із ${tokens.length} адресатів)`);
+            } else {
+                console.log("🔕 Пуш не відправлено (всі отримувачі відфільтровані або їх немає)");
             }
         } catch (error) {
             console.error("Помилка розсилки пушів:", error);
