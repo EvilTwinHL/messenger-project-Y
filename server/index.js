@@ -9,30 +9,24 @@ var serviceAccount = require("./serviceAccountKey.json");
 const BUCKET_NAME = "project-y-8df27.firebasestorage.app"; 
 // --------------------
 
-// Ініціалізація з Bucket
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   storageBucket: BUCKET_NAME 
 });
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket(); // Підключаємось до сховища
+const bucket = admin.storage().bucket();
 
 const app = express();
 app.use(cors());
-app.use(express.json()); // 🔥 ВАЖЛИВО: Додано для обробки JSON при авторизації
+app.use(express.json());
 
-// Налаштування Multer (тимчасове зберігання файлу перед відправкою в хмару)
 const multer = require('multer');
 const fs = require('fs');
-const upload = multer({ dest: 'uploads/' }); // Тимчасова папка
+const upload = multer({ dest: 'uploads/' });
 
-// --- 📱 СХОВИЩЕ ТОКЕНІВ (В пам'яті) ---
-let pushTokens = new Set(); 
-
-// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД + АВАТАРКА) ---
+// --- 🔐 1. АВТОРИЗАЦІЯ ---
 app.post('/auth', async (req, res) => {
-    // 🔥 ЗМІНА: Приймаємо також avatarUrl
     const { username, avatarUrl } = req.body;
 
     if (!username || username.trim().length === 0) {
@@ -44,148 +38,135 @@ app.post('/auth', async (req, res) => {
         const snapshot = await usersRef.where('username', '==', username).get();
 
         if (snapshot.empty) {
-            // Створюємо нового користувача
             const newUser = {
                 username: username,
-                avatarUrl: avatarUrl || null, // Зберігаємо аватарку
+                avatarUrl: avatarUrl || null,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             };
             await usersRef.add(newUser);
             return res.json({ status: 'created', user: newUser });
         } else {
-            // Існуючий користувач - оновлюємо аватарку, якщо вона прийшла
             const docId = snapshot.docs[0].id;
             if (avatarUrl) {
                 await usersRef.doc(docId).update({ avatarUrl: avatarUrl });
             }
-            
             const userData = snapshot.docs[0].data();
-            // Повертаємо актуальні дані (нову аватарку, якщо оновили)
             userData.avatarUrl = avatarUrl || userData.avatarUrl;
-            
             return res.json({ status: 'found', user: userData });
         }
     } catch (error) {
         console.error("Auth Error:", error);
-        res.status(500).json({ error: "Помилка сервера при вході" });
+        res.status(500).json({ error: "Помилка сервера" });
     }
 });
 
-// --- ЗАВАНТАЖЕННЯ ФОТО ---
+// --- 📤 ЗАВАНТАЖЕННЯ ФАЙЛІВ ---
 app.post('/upload', upload.single('image'), async (req, res) => {
     if (!req.file) return res.status(400).send('No file');
-
     try {
         const localFilePath = req.file.path;
+        // Очищаємо ім'я файлу від спецсимволів
         const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
         const remoteFileName = `images/${Date.now()}_${safeName}`;
 
-        // 1. Завантажуємо в Firebase Storage
         await bucket.upload(localFilePath, {
             destination: remoteFileName,
-            metadata: {
-                contentType: req.file.mimetype, 
-            }
+            metadata: { contentType: req.file.mimetype }
         });
 
-        // 2. Отримуємо публічне посилання (діє до 2500 року)
         const file = bucket.file(remoteFileName);
         const [url] = await file.getSignedUrl({
             action: 'read',
             expires: '03-01-2500' 
         });
 
-        // 3. Видаляємо тимчасовий файл
         fs.unlinkSync(localFilePath);
-
         res.json({ url: url });
-
     } catch (error) {
-        console.error("Помилка завантаження:", error);
+        console.error("Upload Error:", error);
         res.status(500).send("Upload failed");
     }
 });
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
-
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('Chat Server (Firebase DB + Storage + Auth + Avatars) is Running! 🚀');
-});
+app.get('/', (req, res) => res.send('Server Running (Firestore Tokens) 🚀'));
+app.get('/ping', (req, res) => res.send('pong'));
 
-app.get('/ping', (req, res) => {
-    console.log('pinged');
-    res.send('pong');
-});
-
+// --- 🔌 SOCKET.IO ---
 io.on('connection', async (socket) => {
-    console.log(`[CONN] Користувач підключився: ${socket.id}`);
+    console.log(`[CONN] ${socket.id}`);
 
-    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА ---
-    socket.on('register_token', (token) => {
-        if(token) {
-            pushTokens.add(token);
-            console.log(`📲 Токен додано. Активних пристроїв: ${pushTokens.size}`);
-        }
-    });
-
-    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ ---
-    try {
-        const messagesRef = db.collection('messages');
-        const snapshot = await messagesRef.orderBy('timestamp', 'asc').limit(50).get();
-        const history = [];
-        snapshot.forEach(doc => history.push(doc.data()));
-        socket.emit('load_history', history);
-    } catch (error) {
-        console.error("Помилка історії:", error);
-    }
-
-    // --- 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ + ПУШ РОЗСИЛКА ---
-    socket.on('send_message', async (data) => {
-        const messageData = {
-            text: data.text || '',
-            sender: data.sender,
-            senderAvatar: data.senderAvatar || null, // 🔥 ЗБЕРІГАЄМО АВАТАРКУ АВТОРА
-            type: data.type || 'text',
-            imageUrl: data.imageUrl || null,
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
-        };
-
-        // А) Зберігаємо в базу
-        await db.collection('messages').add(messageData);
-        
-        // Б) Відправляємо всім, хто онлайн у чаті
-        io.emit('receive_message', data); 
-
-        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ 🔥
-        if (pushTokens.size > 0) {
-            const tokensArray = Array.from(pushTokens);
-            
-            // Формуємо повідомлення
-            const notificationTitle = `Нове повідомлення від ${data.sender}`;
-            const notificationBody = data.type === 'image' ? '📷 Надіслав фото' : data.text;
-
-            const payload = {
-                notification: {
-                    title: notificationTitle,
-                    body: notificationBody,
-                },
-                tokens: tokensArray,
-            };
-
+    // 🔥 1. ЗБЕРІГАЄМО ТОКЕН У БАЗУ (FIRESTORE)
+    socket.on('register_token', async (token) => {
+        if (token) {
             try {
-                const response = await admin.messaging().sendEachForMulticast(payload);
-                console.log(`🔔 Пуш розіслано: Успішно ${response.successCount}`);
-            } catch (error) {
-                console.error("Помилка розсилки пушів:", error);
+                // Використовуємо токен як ID документа, щоб уникнути дублікатів
+                await db.collection('fcm_tokens').doc(token).set({
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                console.log(`💾 Токен збережено в БД`);
+            } catch (e) {
+                console.error("Error saving token:", e);
             }
         }
     });
 
-    socket.on('disconnect', () => {
-        console.log(`[DISC] Відключено: ${socket.id}`);
+    // 2. ІСТОРІЯ ПОВІДОМЛЕНЬ
+    try {
+        const snapshot = await db.collection('messages').orderBy('timestamp', 'asc').limit(50).get();
+        const history = [];
+        snapshot.forEach(doc => history.push(doc.data()));
+        socket.emit('load_history', history);
+    } catch (e) { console.error(e); }
+
+    // 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ
+    socket.on('send_message', async (data) => {
+        const messageData = {
+            text: data.text || '',
+            sender: data.sender,
+            senderAvatar: data.senderAvatar || null,
+            type: data.type || 'text',
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // А) Зберігаємо повідомлення
+        await db.collection('messages').add(messageData);
+        io.emit('receive_message', data);
+
+        // Б) 🔥 ЧИТАЄМО ТОКЕНИ З БАЗИ І ВІДПРАВЛЯЄМО ПУШІ
+        try {
+            const tokensSnapshot = await db.collection('fcm_tokens').get();
+            const tokens = tokensSnapshot.docs.map(doc => doc.id); // Беремо ID документів (це і є токени)
+
+            if (tokens.length > 0) {
+                const payload = {
+                    notification: {
+                        title: `Нове від ${data.sender}`,
+                        body: data.type === 'image' ? '📷 Фото' : data.text,
+                    },
+                    tokens: tokens,
+                };
+                
+                const response = await admin.messaging().sendEachForMulticast(payload);
+                console.log(`🔔 Пуш розіслано: ${response.successCount}/${tokens.length}`);
+                
+                // (Опціонально) Видалення неактивних токенів
+                if (response.failureCount > 0) {
+                    const failedTokens = [];
+                    response.responses.forEach((resp, idx) => {
+                        if (!resp.success) {
+                            failedTokens.push(tokens[idx]);
+                        }
+                    });
+                    // Тут можна додати логіку видалення failedTokens з бази
+                }
+            }
+        } catch (e) {
+            console.error("Push Error:", e);
+        }
     });
 });
 
