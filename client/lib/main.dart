@@ -1,11 +1,11 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io'; // Для перевірки платформи
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shorebird_code_push/shorebird_code_push.dart'; // 📦 Бібліотека оновлень
-// 🔥 НОВІ БІБЛІОТЕКИ ДЛЯ ПУШІВ
+// 🔥 БІБЛІОТЕКИ ДЛЯ ПУШІВ (тільки для Android/iOS)
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -21,17 +21,24 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Ініціалізація Firebase (тільки для Android/iOS)
+  // ✅ Ініціалізація Firebase ТІЛЬКИ для Android/iOS
   if (Platform.isAndroid || Platform.isIOS) {
     try {
       await Firebase.initializeApp();
+
+      // Налаштування фонового обробника
       FirebaseMessaging.onBackgroundMessage(
         _firebaseMessagingBackgroundHandler,
       );
-      print("✅ Firebase ініціалізовано");
+
+      print("✅ Firebase ініціалізовано для ${Platform.operatingSystem}");
     } catch (e) {
       print("❌ Помилка ініціалізації Firebase: $e");
     }
+  } else {
+    print(
+      "ℹ️ Firebase пропущено для ${Platform.operatingSystem} (не підтримується)",
+    );
   }
 
   runApp(const MyApp());
@@ -65,7 +72,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late IO.Socket socket;
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
-  final String myName = Platform.isAndroid ? 'Мій Телефон' : 'Мій PC';
+  final String myName = Platform.isAndroid ? 'Android' : 'Windows';
 
   // --- Інструмент оновлення (Shorebird) ---
   final _updater = ShorebirdUpdater();
@@ -76,8 +83,8 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     initSocket();
 
-    // Запускаємо налаштування пушів (тільки на Android)
-    if (Platform.isAndroid) {
+    // ✅ Запускаємо налаштування пушів ТІЛЬКИ на Android/iOS
+    if (Platform.isAndroid || Platform.isIOS) {
       setupPushNotifications();
     }
 
@@ -88,6 +95,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // --- 🔔 ЛОГІКА ПУШІВ (Push Notifications) 🔔 ---
+  // ✅ Цей метод викликається ТІЛЬКИ на Android/iOS
   Future<void> setupPushNotifications() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
@@ -256,11 +264,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.onConnect((_) {
       print('✅ Підключено до сервера');
-      // При підключенні відправляємо токен знову (раптом зв'язок обривався)
-      if (Platform.isAndroid) {
-        FirebaseMessaging.instance.getToken().then((token) {
-          if (token != null) socket.emit('register_token', token);
-        });
+
+      // ✅ При підключенні відправляємо токен знову ТІЛЬКИ для Android/iOS
+      if (Platform.isAndroid || Platform.isIOS) {
+        FirebaseMessaging.instance
+            .getToken()
+            .then((token) {
+              if (token != null) {
+                socket.emit('register_token', token);
+                print('🔑 Токен відправлено на сервер');
+              }
+            })
+            .catchError((error) {
+              print('❌ Помилка отримання токена: $error');
+            });
       }
     });
 
