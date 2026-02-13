@@ -58,27 +58,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Мій Месенджер',
-
-      //theme: ThemeData(primarySwatch: Colors.blueGrey, useMaterial3: true),
-      themeMode: ThemeMode.dark, // Примусово вмикаємо темну тему
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color.fromARGB(
-            255,
-            43,
-            59,
-            239,
-          ), // Фірмовий синій акцент
-          brightness: Brightness.dark,
-          surface: const Color(0xFF131314), // Основний фон (як у чаті)
-          background: const Color.fromARGB(255, 22, 22, 23),
-          onSurface: const Color.fromARGB(255, 74, 74, 74), // Колір тексту
-        ),
-        scaffoldBackgroundColor: const Color(
-          0xFF131314,
-        ), // Фоновий колір екрана
-      ),
+      theme: ThemeData(primarySwatch: Colors.indigo, useMaterial3: true),
       home: initialScreen,
     );
   }
@@ -178,7 +158,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color.fromARGB(255, 46, 46, 46),
+      backgroundColor: Colors.indigo,
       body: Center(
         child: Card(
           margin: const EdgeInsets.all(24),
@@ -191,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   onTap: _pickAvatar,
                   child: CircleAvatar(
                     radius: 50,
-                    backgroundColor: const Color.fromARGB(255, 32, 32, 32),
+                    backgroundColor: Colors.grey[200],
                     backgroundImage: _avatarFile != null
                         ? FileImage(_avatarFile!)
                         : null,
@@ -199,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ? const Icon(
                             Icons.add_a_photo,
                             size: 40,
-                            color: Color.fromARGB(255, 188, 52, 109),
+                            color: Colors.indigo,
                           )
                         : null,
                   ),
@@ -226,13 +206,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _login,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color.fromARGB(255, 36, 36, 36),
-                      foregroundColor: const Color.fromARGB(255, 69, 69, 69),
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
                     ),
                     child: _isLoading
-                        ? const CircularProgressIndicator(
-                            color: Color.fromARGB(255, 62, 62, 62),
-                          )
+                        ? const CircularProgressIndicator(color: Colors.white)
                         : const Text("УВІЙТИ"),
                   ),
                 ),
@@ -558,7 +536,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         backgroundColor: Colors.indigo,
-        foregroundColor: const Color.fromARGB(255, 50, 50, 50),
+        foregroundColor: Colors.white,
         actions: [
           // 🔥 Оновлена кнопка Shorebird з індикацією
           Stack(
@@ -633,12 +611,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: isMe
-                                ? const Color.fromARGB(255, 69, 69, 69)
-                                : Colors.white,
-                            border: Border.all(
-                              color: const Color.fromARGB(255, 44, 68, 255),
-                            ),
+                            color: isMe ? Colors.blue[100] : Colors.white,
+                            border: Border.all(color: Colors.grey.shade300),
                             borderRadius: BorderRadius.only(
                               topLeft: const Radius.circular(15),
                               topRight: const Radius.circular(15),
@@ -659,12 +633,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
-                                    color: const Color.fromARGB(
-                                      255,
-                                      220,
-                                      220,
-                                      220,
-                                    ),
+                                    color: Colors.grey[600],
                                   ),
                                 ),
                               const SizedBox(height: 4),
@@ -706,7 +675,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     decoration: InputDecoration(
                       hintText: "Повідомлення...",
                       filled: true,
-                      fillColor: const Color.fromARGB(255, 185, 185, 185),
+                      fillColor: Colors.grey[100],
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(25),
                         borderSide: BorderSide.none,
