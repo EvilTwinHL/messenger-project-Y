@@ -5,10 +5,9 @@ const cors = require('cors');
 var admin = require("firebase-admin");
 var serviceAccount = require("./serviceAccountKey.json");
 
-// --- 🛑 НАЛАШТУВАННЯ ---
-// Взято з вашого файлу
+// --- НАЛАШТУВАННЯ ---
 const BUCKET_NAME = "project-y-8df27.firebasestorage.app"; 
-// -----------------------
+// --------------------
 
 // Ініціалізація з Bucket
 admin.initializeApp({
@@ -21,6 +20,7 @@ const bucket = admin.storage().bucket(); // Підключаємось до сх
 
 const app = express();
 app.use(cors());
+app.use(express.json()); // 🔥 ВАЖЛИВО: Додано для обробки JSON при авторизації
 
 // Налаштування Multer (тимчасове зберігання файлу перед відправкою в хмару)
 const multer = require('multer');
@@ -28,8 +28,38 @@ const fs = require('fs');
 const upload = multer({ dest: 'uploads/' }); // Тимчасова папка
 
 // --- 📱 СХОВИЩЕ ТОКЕНІВ (В пам'яті) ---
-// Сюди будемо складати токени всіх телефонів, які підключилися
 let pushTokens = new Set(); 
+
+// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД) ---
+app.post('/auth', async (req, res) => {
+    const { username } = req.body;
+
+    if (!username || username.trim().length === 0) {
+        return res.status(400).json({ error: "Ім'я не може бути пустим" });
+    }
+
+    try {
+        const usersRef = db.collection('users');
+        const snapshot = await usersRef.where('username', '==', username).get();
+
+        if (snapshot.empty) {
+            // Створюємо нового користувача, якщо такого немає
+            const newUser = {
+                username: username,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            await usersRef.add(newUser);
+            return res.json({ status: 'created', user: newUser });
+        } else {
+            // Повертаємо існуючого
+            const userData = snapshot.docs[0].data();
+            return res.json({ status: 'found', user: userData });
+        }
+    } catch (error) {
+        console.error("Auth Error:", error);
+        res.status(500).json({ error: "Помилка сервера при вході" });
+    }
+});
 
 // --- ЗАВАНТАЖЕННЯ ФОТО ---
 app.post('/upload', upload.single('image'), async (req, res) => {
@@ -57,7 +87,6 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         // 3. Видаляємо тимчасовий файл
         fs.unlinkSync(localFilePath);
 
-        console.log(`✅ Фото завантажено: ${url}`);
         res.json({ url: url });
 
     } catch (error) {
@@ -72,18 +101,23 @@ const io = new Server(server, { cors: { origin: "*" } });
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Chat Server (Firebase DB + Storage + Push) is Running! 🚀');
+    res.send('Chat Server (Firebase DB + Storage + Auth) is Running! 🚀');
+});
+
+// 🔥 ЗБЕРЕЖЕНО ВАШ PING
+app.get('/ping', (req, res) => {
+    console.log('pinged');
+    res.send('pong');
 });
 
 io.on('connection', async (socket) => {
     console.log(`[CONN] Користувач підключився: ${socket.id}`);
 
-    // --- 🔔 1. РЕЄСТРАЦІЯ ТОКЕНА ---
-    // Клієнт надсилає свій "паспорт", щоб ми знали, куди слати пуш
+    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА ---
     socket.on('register_token', (token) => {
         if(token) {
             pushTokens.add(token);
-            console.log(`📲 Токен додано. Активних пристроїв для пушів: ${pushTokens.size}`);
+            console.log(`📲 Токен додано. Активних пристроїв: ${pushTokens.size}`);
         }
     });
 
@@ -127,15 +161,13 @@ io.on('connection', async (socket) => {
                     title: notificationTitle,
                     body: notificationBody,
                 },
-                tokens: tokensArray, // Список отримувачів
+                tokens: tokensArray,
             };
 
             try {
                 // Використовуємо Multicast для розсилки всім
                 const response = await admin.messaging().sendEachForMulticast(payload);
-                console.log(`🔔 Пуш розіслано: Успішно ${response.successCount}, Помилок ${response.failureCount}`);
-                
-                // (Тут можна додати логіку видалення неактивних токенів, якщо failureCount > 0)
+                console.log(`🔔 Пуш розіслано: Успішно ${response.successCount}`);
             } catch (error) {
                 console.error("Помилка розсилки пушів:", error);
             }
@@ -145,11 +177,6 @@ io.on('connection', async (socket) => {
     socket.on('disconnect', () => {
         console.log(`[DISC] Відключено: ${socket.id}`);
     });
-});
-
-app.get('/ping', (req, res) => {
-  console.log('--- [CRON] Пінгування отримано! ---');
-  res.status(200).send('Server is alive!');
 });
 
 server.listen(PORT, () => {
