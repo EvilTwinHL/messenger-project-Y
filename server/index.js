@@ -30,9 +30,10 @@ const upload = multer({ dest: 'uploads/' }); // Тимчасова папка
 // --- 📱 СХОВИЩЕ ТОКЕНІВ (В пам'яті) ---
 let pushTokens = new Set(); 
 
-// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД) ---
+// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД + АВАТАРКА) ---
 app.post('/auth', async (req, res) => {
-    const { username } = req.body;
+    // 🔥 ЗМІНА: Приймаємо також avatarUrl
+    const { username, avatarUrl } = req.body;
 
     if (!username || username.trim().length === 0) {
         return res.status(400).json({ error: "Ім'я не може бути пустим" });
@@ -43,16 +44,25 @@ app.post('/auth', async (req, res) => {
         const snapshot = await usersRef.where('username', '==', username).get();
 
         if (snapshot.empty) {
-            // Створюємо нового користувача, якщо такого немає
+            // Створюємо нового користувача
             const newUser = {
                 username: username,
+                avatarUrl: avatarUrl || null, // Зберігаємо аватарку
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             };
             await usersRef.add(newUser);
             return res.json({ status: 'created', user: newUser });
         } else {
-            // Повертаємо існуючого
+            // Існуючий користувач - оновлюємо аватарку, якщо вона прийшла
+            const docId = snapshot.docs[0].id;
+            if (avatarUrl) {
+                await usersRef.doc(docId).update({ avatarUrl: avatarUrl });
+            }
+            
             const userData = snapshot.docs[0].data();
+            // Повертаємо актуальні дані (нову аватарку, якщо оновили)
+            userData.avatarUrl = avatarUrl || userData.avatarUrl;
+            
             return res.json({ status: 'found', user: userData });
         }
     } catch (error) {
@@ -67,7 +77,8 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 
     try {
         const localFilePath = req.file.path;
-        const remoteFileName = `images/${Date.now()}_${req.file.originalname}`;
+        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
+        const remoteFileName = `images/${Date.now()}_${safeName}`;
 
         // 1. Завантажуємо в Firebase Storage
         await bucket.upload(localFilePath, {
@@ -101,10 +112,9 @@ const io = new Server(server, { cors: { origin: "*" } });
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Chat Server (Firebase DB + Storage + Auth) is Running! 🚀');
+    res.send('Chat Server (Firebase DB + Storage + Auth + Avatars) is Running! 🚀');
 });
 
-// 🔥 ЗБЕРЕЖЕНО ВАШ PING
 app.get('/ping', (req, res) => {
     console.log('pinged');
     res.send('pong');
@@ -137,6 +147,7 @@ io.on('connection', async (socket) => {
         const messageData = {
             text: data.text || '',
             sender: data.sender,
+            senderAvatar: data.senderAvatar || null, // 🔥 ЗБЕРІГАЄМО АВАТАРКУ АВТОРА
             type: data.type || 'text',
             imageUrl: data.imageUrl || null,
             timestamp: admin.firestore.FieldValue.serverTimestamp()
@@ -165,7 +176,6 @@ io.on('connection', async (socket) => {
             };
 
             try {
-                // Використовуємо Multicast для розсилки всім
                 const response = await admin.messaging().sendEachForMulticast(payload);
                 console.log(`🔔 Пуш розіслано: Успішно ${response.successCount}`);
             } catch (error) {

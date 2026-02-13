@@ -6,7 +6,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shorebird_code_push/shorebird_code_push.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🔥 НОВЕ: Для пам'яті
+import 'package:shared_preferences/shared_preferences.dart'; // 🔥 Для пам'яті
 // 🔥 FIREBASE
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -38,12 +38,15 @@ void main() async {
   // 2. Перевірка: чи користувач вже входив?
   final prefs = await SharedPreferences.getInstance();
   final savedUsername = prefs.getString('username');
+  final savedAvatar = prefs.getString(
+    'avatarUrl',
+  ); // 🔥 Читаємо збережену аватарку
 
   // Якщо ім'я є - відкриваємо Чат, якщо ні - Логін
   runApp(
     MyApp(
       initialScreen: savedUsername != null
-          ? ChatScreen(username: savedUsername)
+          ? ChatScreen(username: savedUsername, avatarUrl: savedAvatar)
           : const LoginScreen(),
     ),
   );
@@ -65,7 +68,7 @@ class MyApp extends StatelessWidget {
 }
 
 // =======================
-// 🔐 ЕКРАН ВХОДУ (LOGIN)
+// 🔐 ЕКРАН ВХОДУ (LOGIN) + АВАТАР
 // =======================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -77,6 +80,19 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   bool _isLoading = false;
+  File? _avatarFile; // 🔥 Локальний файл аватарки
+  String? _uploadedAvatarUrl; // 🔥 URL після завантаження
+
+  // Вибір фото для аватарки
+  Future<void> _pickAvatar() async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      setState(() {
+        _avatarFile = File(image.path);
+      });
+    }
+  }
 
   Future<void> _login() async {
     final username = _usernameController.text.trim();
@@ -85,24 +101,52 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Відправляємо запит на сервер
+      // 1. Якщо користувач вибрав фото - спочатку вантажимо його
+      if (_avatarFile != null) {
+        var request = http.MultipartRequest(
+          'POST',
+          Uri.parse('$serverUrl/upload'),
+        );
+        request.files.add(
+          await http.MultipartFile.fromPath('image', _avatarFile!.path),
+        );
+        var response = await request.send();
+
+        if (response.statusCode == 200) {
+          var json = jsonDecode(await response.stream.bytesToString());
+          _uploadedAvatarUrl = json['url']; // Отримуємо URL від сервера
+        }
+      }
+
+      // 2. Відправляємо запит на вхід/реєстрацію (разом з аватаркою)
       final response = await http.post(
         Uri.parse('$serverUrl/auth'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'username': username}),
+        body: jsonEncode({
+          'username': username,
+          'avatarUrl': _uploadedAvatarUrl, // 🔥 Відправляємо null або посилання
+        }),
       );
 
       if (response.statusCode == 200) {
-        // Зберігаємо ім'я в пам'ять телефону
+        final responseData = jsonDecode(response.body);
+        final user = responseData['user'];
+        final finalAvatarUrl = user['avatarUrl'];
+
+        // 3. Зберігаємо дані в пам'ять телефону
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('username', username);
+        if (finalAvatarUrl != null) {
+          await prefs.setString('avatarUrl', finalAvatarUrl);
+        }
 
         if (!mounted) return;
-        // Переходимо в чат (Replacement, щоб не можна було повернутися назад кнопкою Back)
+        // Переходимо в чат
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => ChatScreen(username: username),
+            builder: (context) =>
+                ChatScreen(username: username, avatarUrl: finalAvatarUrl),
           ),
         );
       } else {
@@ -113,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Помилка з\'єднання: $e')));
+      ).showSnackBar(SnackBar(content: Text('Помилка: $e')));
     } finally {
       setState(() => _isLoading = false);
     }
@@ -131,13 +175,31 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.lock_person, size: 64, color: Colors.indigo),
-                const SizedBox(height: 20),
+                // 🔥 Кнопка вибору аватарки
+                GestureDetector(
+                  onTap: _pickAvatar,
+                  child: CircleAvatar(
+                    radius: 50,
+                    backgroundColor: Colors.grey[200],
+                    backgroundImage: _avatarFile != null
+                        ? FileImage(_avatarFile!)
+                        : null,
+                    child: _avatarFile == null
+                        ? const Icon(
+                            Icons.add_a_photo,
+                            size: 40,
+                            color: Colors.indigo,
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 10),
                 const Text(
-                  "Вхід у чат",
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  "Торкніться для фото",
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 20),
+
                 TextField(
                   controller: _usernameController,
                   decoration: const InputDecoration(
@@ -174,8 +236,9 @@ class _LoginScreenState extends State<LoginScreen> {
 // 💬 ЕКРАН ЧАТУ
 // =======================
 class ChatScreen extends StatefulWidget {
-  final String username; // Приймаємо ім'я користувача
-  const ChatScreen({super.key, required this.username});
+  final String username;
+  final String? avatarUrl; // 🔥 Приймаємо аватарку
+  const ChatScreen({super.key, required this.username, this.avatarUrl});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -189,7 +252,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
 
-  final _updater = ShorebirdUpdater(); // 📦 Shorebird
+  final _updater = ShorebirdUpdater();
   bool _isCheckingForUpdate = false;
 
   late String myName;
@@ -197,7 +260,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    myName = widget.username; // Беремо ім'я, передане з Логіна
+    myName = widget.username;
     initSocket();
 
     // Пуші запускаємо тільки на мобільних
@@ -243,7 +306,6 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isCheckingForUpdate = false);
 
       if (status == UpdateStatus.outdated) {
-        // Спрощений діалог оновлення
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -277,7 +339,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // --- Вихід (Logout) ---
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('username'); // Видаляємо збережене ім'я
+    await prefs.clear(); // 🔥 Очищаємо все (ім'я та аватарку)
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
@@ -298,7 +360,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.onConnect((_) {
       print('✅ Підключено до сервера');
-      // Якщо це телефон, відправимо токен знову (якщо він є)
       if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
         FirebaseMessaging.instance.getToken().then((token) {
           if (token != null) socket.emit('register_token', token);
@@ -348,27 +409,24 @@ class _ChatScreenState extends State<ChatScreen> {
       var response = await request.send();
       if (response.statusCode == 200) {
         var json = jsonDecode(await response.stream.bytesToString());
-        socket.emit('send_message', {
-          'text': json['url'],
-          'sender': myName,
-          'type': 'image',
-        });
+        sendMessage(imageUrl: json['url'], type: 'image');
       }
     } catch (e) {
       print(e);
     }
   }
 
-  void sendMessage() {
+  void sendMessage({String? imageUrl, String type = 'text'}) {
     String text = textController.text.trim();
-    if (text.isNotEmpty) {
-      socket.emit('send_message', {
-        'text': text,
-        'sender': myName, // 🔥 ВИКОРИСТОВУЄМО РЕАЛЬНЕ ІМ'Я
-        'type': 'text',
-      });
-      textController.clear();
-    }
+    if (text.isEmpty && imageUrl == null) return;
+
+    socket.emit('send_message', {
+      'text': imageUrl ?? text,
+      'sender': myName,
+      'senderAvatar': widget.avatarUrl, // 🔥 Відправляємо своє фото
+      'type': type,
+    });
+    textController.clear();
   }
 
   @override
@@ -383,7 +441,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Чат ($myName)"),
+        // 🔥 Показуємо свою аватарку в шапці
+        title: Row(
+          children: [
+            if (widget.avatarUrl != null)
+              CircleAvatar(
+                backgroundImage: NetworkImage(widget.avatarUrl!),
+                radius: 16,
+              ),
+            const SizedBox(width: 10),
+            Text("Чат ($myName)"),
+          ],
+        ),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
         actions: [
@@ -391,10 +460,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: const Icon(Icons.system_update),
             onPressed: _checkForUpdate,
           ),
-          IconButton(
-            icon: const Icon(Icons.exit_to_app),
-            onPressed: _logout,
-          ), // Кнопка виходу
+          IconButton(icon: const Icon(Icons.exit_to_app), onPressed: _logout),
         ],
       ),
       body: Column(
@@ -408,48 +474,90 @@ class _ChatScreenState extends State<ChatScreen> {
                 final isMe = msg['sender'] == myName;
                 final isImage = msg['type'] == 'image';
                 final String content = msg['text'] ?? '';
+                final String? avatar =
+                    msg['senderAvatar']; // 🔥 Аватарка автора повідомлення
 
-                return Align(
-                  alignment: isMe
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(
-                      vertical: 5,
-                      horizontal: 10,
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: isMe ? Colors.blue[100] : Colors.white,
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          msg['sender'] ?? 'Anon',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 5,
+                    horizontal: 10,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: isMe
+                        ? MainAxisAlignment.end
+                        : MainAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.end, // Рівняємо по низу
+                    children: [
+                      // 🔥 Аватарка співрозмовника (тільки якщо не я)
+                      if (!isMe) ...[
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundImage: avatar != null
+                              ? NetworkImage(avatar)
+                              : null,
+                          backgroundColor: Colors.grey[300],
+                          child: avatar == null
+                              ? const Icon(
+                                  Icons.person,
+                                  size: 16,
+                                  color: Colors.grey,
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isMe ? Colors.blue[100] : Colors.white,
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(15),
+                              topRight: const Radius.circular(15),
+                              // Якщо я - хвостик справа, якщо ні - зліва
+                              bottomLeft: isMe
+                                  ? const Radius.circular(15)
+                                  : const Radius.circular(0),
+                              bottomRight: isMe
+                                  ? const Radius.circular(0)
+                                  : const Radius.circular(15),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Ім'я показуємо тільки якщо це не я
+                              if (!isMe)
+                                Text(
+                                  msg['sender'] ?? 'Anon',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              const SizedBox(height: 4),
+                              isImage
+                                  ? SizedBox(
+                                      width: 200,
+                                      child: Image.network(
+                                        content,
+                                        errorBuilder: (c, e, s) =>
+                                            const Icon(Icons.broken_image),
+                                      ),
+                                    )
+                                  : Text(
+                                      content,
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 5),
-                        isImage
-                            ? SizedBox(
-                                width: 200,
-                                child: Image.network(
-                                  content,
-                                  errorBuilder: (c, e, s) =>
-                                      const Icon(Icons.broken_image),
-                                ),
-                              )
-                            : Text(
-                                content,
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 );
               },
