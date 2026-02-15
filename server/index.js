@@ -158,7 +158,7 @@ io.on('connection', async (socket) => {
         const messagesRef = db.collection('messages');
         
         // 1. Беремо 50 НАЙНОВІШИХ повідомлень
-        const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(50).get();
+        const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(100).get();
         
         // 🔥 ЗМІНА: Тепер ми додаємо ID документа до об'єкта повідомлення
         let history = snapshot.docs.map(doc => {
