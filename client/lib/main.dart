@@ -1,5 +1,6 @@
 ﻿import 'dart:convert';
 import 'dart:io';
+import 'dart:async'; // 🔥 1. Додано для таймера
 import 'package:flutter/foundation.dart'; // Для перевірки kIsWeb
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
@@ -249,6 +250,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   late String myName;
 
+  // 🔥 2. Змінні для Typing Indicator
+  bool _isTyping = false;
+  String _typingUser = '';
+  Timer? _typingTimer;
+
   @override
   void initState() {
     super.initState();
@@ -467,6 +473,26 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => messages.add(data));
       _scrollToBottom();
     });
+
+    // 🔥 3. СЛУХАЄМО, ЧИ ХТОСЬ ПИШЕ
+    socket.on('display_typing', (data) {
+      if (mounted) {
+        setState(() {
+          _isTyping = true;
+          _typingUser = data['username'];
+        });
+
+        _typingTimer?.cancel();
+
+        _typingTimer = Timer(const Duration(seconds: 3), () {
+          if (mounted) {
+            setState(() {
+              _isTyping = false;
+            });
+          }
+        });
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -517,6 +543,7 @@ class _ChatScreenState extends State<ChatScreen> {
     socket.dispose();
     textController.dispose();
     _scrollController.dispose();
+    _typingTimer?.cancel(); // 🔥 Скасовуємо таймер
     super.dispose();
   }
 
@@ -568,7 +595,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          // --- 🔥 ТУТ ЗМІНЕНО: Використовуємо MessageBubble ---
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -579,7 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 final isImage = msg['type'] == 'image';
                 final String content = msg['text'] ?? '';
                 final String? avatar = msg['senderAvatar'];
-                final dynamic timestamp = msg['timestamp']; // Отримуємо час
+                final dynamic timestamp = msg['timestamp'];
 
                 return MessageBubble(
                   text: isImage ? '' : content,
@@ -592,7 +618,24 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-          // ----------------------------------------------------
+
+          // 🔥 5. ВІЗУАЛІЗАЦІЯ "НАБИРАЄ ПОВІДОМЛЕННЯ..."
+          if (_isTyping)
+            Padding(
+              padding: const EdgeInsets.only(left: 16.0, bottom: 4.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  "$_typingUser набирає повідомлення... ✍️",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ),
+            ),
+
           Container(
             padding: const EdgeInsets.all(8.0),
             color: Colors.white,
@@ -605,6 +648,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: textController,
+                    // 🔥 4. Відправляємо сигнал при введенні тексту
+                    onChanged: (text) {
+                      if (text.isNotEmpty) {
+                        socket.emit('typing', {'username': myName});
+                      }
+                    },
                     decoration: InputDecoration(
                       hintText: "Повідомлення...",
                       filled: true,

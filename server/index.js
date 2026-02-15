@@ -127,11 +127,8 @@ io.on('connection', async (socket) => {
         console.log(`📱 CLIENT LOG [${socket.id}]:`, msg);
     });
 
-    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА (ОНОВЛЕНО) ---
+    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА ---
     socket.on('register_token', async (data) => {
-        // Ми очікуємо об'єкт { token: "...", username: "..." }
-        // Але про всяк випадок підтримуємо і старий формат (просто рядок)
-        
         let token = "";
         let username = null;
 
@@ -146,7 +143,7 @@ io.on('connection', async (socket) => {
             console.log(`💾 Збереження токена для ${username || 'Unknown'}: ${token.substring(0, 10)}...`);
             try {
                 await db.collection('fcm_tokens').doc(token).set({
-                    username: username, // 🔥 Зберігаємо власника токена
+                    username: username,
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
                 console.log(`✅ Токен успішно записано в БД`);
@@ -156,17 +153,22 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ (ВИПРАВЛЕНО) ---
+    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ (ОНОВЛЕНО ДЛЯ ID) ---
     try {
         const messagesRef = db.collection('messages');
         
-        // 1. Беремо 50 НАЙНОВІШИХ повідомлень ('desc' - спадання)
+        // 1. Беремо 50 НАЙНОВІШИХ повідомлень
         const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(50).get();
         
-        // 2. Отримуємо дані з документів
-        let history = snapshot.docs.map(doc => doc.data());
+        // 🔥 ЗМІНА: Тепер ми додаємо ID документа до об'єкта повідомлення
+        let history = snapshot.docs.map(doc => {
+            return {
+                id: doc.id, // <--- ВАЖЛИВО: додаємо ID, щоб потім можна було видалити
+                ...doc.data()
+            };
+        });
 
-        // 3. Розвертаємо масив, щоб у чаті вони йшли [старе -> нове] (знизу екрану — свіжі)
+        // 3. Розвертаємо масив
         history = history.reverse();
 
         socket.emit('load_history', history);
@@ -174,7 +176,7 @@ io.on('connection', async (socket) => {
         console.error("Помилка історії:", error);
     }
 
-    // --- 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ + ПУШ РОЗСИЛКА ---
+    // --- 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ (ОНОВЛЕНО ДЛЯ ID) ---
     socket.on('send_message', async (data) => {
         const messageData = {
             text: data.text || '',
@@ -185,21 +187,26 @@ io.on('connection', async (socket) => {
             timestamp: admin.firestore.FieldValue.serverTimestamp()
         };
 
-        // А) Зберігаємо в базу
-        await db.collection('messages').add(messageData);
+        // А) 🔥 ЗМІНА: Зберігаємо і отримуємо посилання (docRef), щоб знати ID
+        const docRef = await db.collection('messages').add(messageData);
         
-        // Б) Відправляємо всім, хто онлайн у чаті
-        io.emit('receive_message', data); 
+        // Створюємо об'єкт для відправки клієнтам з реальним ID
+        const savedMessage = {
+            id: docRef.id, // <--- ID з бази
+            ...data,       // Дані від клієнта
+            timestamp: new Date().toISOString() // Тимчасовий час для відображення одразу
+        };
+        
+        // Б) Відправляємо всім, хто онлайн (вже з ID!)
+        io.emit('receive_message', savedMessage); 
 
-        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ (З ФІЛЬТРОМ) 🔥
+        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ
         try {
             const tokensSnapshot = await db.collection('fcm_tokens').get();
             
-            // 🔥 ФІЛЬТРАЦІЯ: Виключаємо токени відправника
             const tokens = tokensSnapshot.docs
                 .filter(doc => {
                     const tokenData = doc.data();
-                    // Якщо ім'я в токені співпадає з відправником - пропускаємо
                     return tokenData.username !== data.sender;
                 })
                 .map(doc => doc.id);
@@ -214,19 +221,30 @@ io.on('connection', async (socket) => {
                 };
                 
                 const response = await admin.messaging().sendEachForMulticast(payload);
-                console.log(`🔔 Пуш розіслано: ${response.successCount} (із ${tokens.length} адресатів)`);
-            } else {
-                console.log("🔕 Пуш не відправлено (всі отримувачі відфільтровані або їх немає)");
+                console.log(`🔔 Пуш розіслано: ${response.successCount}`);
             }
         } catch (error) {
             console.error("Помилка розсилки пушів:", error);
         }
     });
 
-    // --- 4. ІНДИКАТОР НАБОРУ (НОВЕ) ---
-    // Отримуємо подію, що хтось пише, і розсилаємо всім іншим
+    // --- 4. ІНДИКАТОР НАБОРУ ---
     socket.on('typing', (data) => {
         socket.broadcast.emit('display_typing', data);
+    });
+
+    // --- 5. 🔥 ВИДАЛЕННЯ ПОВІДОМЛЕННЯ (НОВЕ) ---
+    socket.on('delete_message', async (messageId) => {
+        console.log(`🗑️ Запит на видалення повідомлення: ${messageId}`);
+        try {
+            // 1. Видаляємо з Firebase
+            await db.collection('messages').doc(messageId).delete();
+            
+            // 2. Кажемо всім клієнтам видалити це повідомлення з екрану
+            io.emit('message_deleted', messageId);
+        } catch (e) {
+            console.error("Помилка видалення:", e);
+        }
     });
 
     socket.on('disconnect', () => {
