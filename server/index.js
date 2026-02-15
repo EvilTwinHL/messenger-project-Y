@@ -255,3 +255,5 @@ io.on('connection', async (socket) => {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
+// update server for function 'delete messeg'

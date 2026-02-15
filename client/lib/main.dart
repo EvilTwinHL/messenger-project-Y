@@ -647,10 +647,34 @@ class _ChatScreenState extends State<ChatScreen> {
                 // 🔥 8. ОБГОРТАЄМО У GestureDetector ДЛЯ LongPress
                 return GestureDetector(
                   onLongPress: () {
-                    // Дозволяємо видаляти тільки свої повідомлення
-                    if (isMe && msgId != null) {
-                      _showDeleteConfirmDialog(msgId);
+                    // ДІАГНОСТИКА
+                    if (!isMe) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Можна видаляти тільки свої повідомлення",
+                          ),
+                        ),
+                      );
+                      return;
                     }
+
+                    if (msgId == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            "Помилка: Це повідомлення не має ID. Перезапустіть сервер.",
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      // Для відладки виведемо в консоль весь об'єкт повідомлення
+                      print("DEBUG MESSAGE DATA: $msg");
+                      return;
+                    }
+
+                    // Якщо все добре - показуємо діалог
+                    _showDeleteConfirmDialog(msgId);
                   },
                   child: MessageBubble(
                     text: isImage ? '' : content,
