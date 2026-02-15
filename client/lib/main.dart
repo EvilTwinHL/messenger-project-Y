@@ -12,6 +12,7 @@ import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'animated_widgets.dart';
 
 // ==========================================
 // 🎨 НАЛАШТУВАННЯ КОЛЬОРІВ ТА СЕРВЕРА
@@ -265,16 +266,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     GestureDetector(
                       onTap: _pickAvatar,
                       child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          //boxShadow: [
-                          //BoxShadow(
-                          // color: AppColors.mainColor.withOpacity(0.4),
-                          //blurRadius: 20,
-                          // spreadRadius: 5,
-                          //),
-                          //],
-                        ),
+                        decoration: BoxDecoration(shape: BoxShape.circle),
                         child: CircleAvatar(
                           radius: 50,
                           backgroundColor: Colors.white.withOpacity(0.1),
@@ -328,7 +320,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           elevation: 0,
-                          //shadowColor: AppColors.mainColor.withOpacity(0.5),
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(
@@ -355,7 +346,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ (GLASS + SIGNAL STYLE)
+// 💬 ЕКРАН ЧАТУ (З УСІМА ПОКРАЩЕННЯМИ)
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -379,8 +370,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   late String myName;
   bool _isTyping = false;
-  String _typingUser = '';
+  String? _typingUser;
   Timer? _typingTimer;
+
+  // 🔥 НОВИЙ КОД: Онлайн користувачі
+  List<String> _onlineUsers = [];
 
   @override
   void initState() {
@@ -531,6 +525,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     socket.connect();
 
+    // 🔥 НОВИЙ КОД: Відправляємо онлайн статус при підключенні
+    socket.onConnect((_) {
+      print('✅ Connected to server');
+      socket.emit('user_online', myName);
+    });
+
     socket.on('load_history', (data) {
       if (data != null) {
         setState(() {
@@ -561,11 +561,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     socket.on('display_typing', (data) {
-      if (mounted) {
+      if (mounted && data['username'] != myName) {
         setState(() {
           _isTyping = true;
           _typingUser = data['username'];
         });
+        // 🔥 НОВИЙ КОД: Прокручуємо до typing indicator
+        _scrollToBottom();
+
         _typingTimer?.cancel();
         _typingTimer = Timer(const Duration(seconds: 3), () {
           if (mounted) setState(() => _isTyping = false);
@@ -576,6 +579,15 @@ class _ChatScreenState extends State<ChatScreen> {
     socket.on('message_deleted', (messageId) {
       if (mounted && messageId != null) {
         setState(() => messages.removeWhere((msg) => msg['id'] == messageId));
+      }
+    });
+
+    // 🔥 НОВИЙ КОД: Слухаємо список онлайн користувачів
+    socket.on('online_users', (data) {
+      if (mounted) {
+        setState(() {
+          _onlineUsers = List<String>.from(data);
+        });
       }
     });
   }
@@ -623,6 +635,121 @@ class _ChatScreenState extends State<ChatScreen> {
     textController.clear();
   }
 
+  // 🔥 НОВИЙ КОД: Контекстне меню
+  void _showContextMenu(BuildContext context, Map message) {
+    final isMe = message['sender'] == myName;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF2a2d38),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Заголовок
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.more_horiz, color: Colors.white70),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Дії з повідомленням',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.white12, height: 1),
+
+            // Копіювати
+            ListTile(
+              leading: const Icon(Icons.copy, color: Colors.white70),
+              title: const Text(
+                'Копіювати',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: message['text'] ?? ''));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Скопійовано'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+
+            // Відповісти (TODO)
+            ListTile(
+              leading: const Icon(Icons.reply, color: Colors.white70),
+              title: const Text(
+                'Відповісти',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                // TODO: Implement reply functionality
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Функція в розробці'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+
+            // Переслати (TODO)
+            ListTile(
+              leading: const Icon(Icons.forward, color: Colors.white70),
+              title: const Text(
+                'Переслати',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                // TODO: Implement forward functionality
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Функція в розробці'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+
+            // Видалити (тільки для власних повідомлень)
+            if (isMe) ...[
+              const Divider(color: Colors.white12, height: 1),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Видалити',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showDeleteConfirmDialog(message['id']);
+                },
+              ),
+            ],
+
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showDeleteConfirmDialog(String messageId) {
     showDialog(
       context: context,
@@ -668,11 +795,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _isSameDay(DateTime d1, DateTime d2) =>
       d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
+
   String _getDateLabel(DateTime date) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    if (DateTime(date.year, date.month, date.day) == today) return "Сьогодні";
-    return "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}";
+    final yesterday = today.subtract(const Duration(days: 1));
+    final messageDate = DateTime(date.year, date.month, date.day);
+
+    if (messageDate == today) return "Сьогодні";
+    if (messageDate == yesterday) return "Вчора";
+
+    return "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
   }
 
   @override
@@ -691,16 +824,28 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(60),
         child: GlassBox(
-          //borderRadius: 0,
           blur: 15,
           opacity: 0.1,
           child: AppBar(
             backgroundColor: Colors.black.withValues(alpha: 0.3),
             elevation: 0,
             centerTitle: true,
-            title: Text(
-              "Chat",
-              style: TextStyle(fontSize: 17, color: Colors.white),
+            title: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "Chat",
+                  style: TextStyle(fontSize: 17, color: Colors.white),
+                ),
+                // 🔥 НОВИЙ КОД: Показуємо кількість онлайн користувачів
+                Text(
+                  '${_onlineUsers.length} онлайн',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withOpacity(0.6),
+                  ),
+                ),
+              ],
             ),
             actions: [
               IconButton(
@@ -733,72 +878,109 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         child: Stack(
-          // 🔥 Використовуємо Stack, щоб панель плавала зверху
           children: [
             // 1. СПИСОК ПОВІДОМЛЕНЬ
             Positioned.fill(
               child: ListView.builder(
                 controller: _scrollController,
-                // Додаємо відступ знизу, щоб повідомлення не ховалися ПІД панеллю в самому кінці
                 padding: EdgeInsets.only(
                   left: 16,
                   right: 16,
                   top: 100,
                   bottom: 100 + MediaQuery.of(context).padding.bottom,
                 ),
-                itemCount: messages.length,
+                itemCount:
+                    messages.length +
+                    (_isTyping && _typingUser != null
+                        ? 1
+                        : 0), // 🔥 +1 для typing indicator
                 itemBuilder: (context, index) {
-                  // ... (Ваш існуючий itemBuilder для MessageBubble) ...
+                  // 🔥 НОВИЙ КОД: Показуємо typing indicator як останній елемент
+                  if (index == messages.length &&
+                      _isTyping &&
+                      _typingUser != null) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: TypingIndicator(username: _typingUser!),
+                    );
+                  }
+
                   final msg = messages[index];
                   final isMe = msg['sender'] == myName;
-                  return MessageBubble(
-                    text: msg['type'] == 'image' ? '' : (msg['text'] ?? ''),
-                    imageUrl: msg['type'] == 'image' ? msg['text'] : null,
-                    sender: msg['sender'] ?? 'Anon',
-                    isMe: isMe,
-                    timestamp: msg['timestamp'],
-                    isRead: msg['read'] == true,
+
+                  // 🔥 НОВИЙ КОД: Date separator logic
+                  bool showDateSeparator = false;
+                  if (index == 0) {
+                    showDateSeparator = true;
+                  } else {
+                    final currentDate = _parseDate(msg['timestamp']);
+                    final prevDate = _parseDate(
+                      messages[index - 1]['timestamp'],
+                    );
+                    showDateSeparator = !_isSameDay(currentDate, prevDate);
+                  }
+                  final dateLabel = _getDateLabel(_parseDate(msg['timestamp']));
+
+                  return Column(
+                    children: [
+                      // 🔥 НОВИЙ КОД: Date separator
+                      if (showDateSeparator) DateSeparator(date: dateLabel),
+
+                      // 🔥 НОВИЙ КОД: Додаємо GestureDetector для контекстного меню
+                      GestureDetector(
+                        onLongPress: () => _showContextMenu(context, msg),
+                        child: AnimatedMessageBubble(
+                          isMe: isMe,
+                          child: MessageBubble(
+                            text: msg['type'] == 'image'
+                                ? ''
+                                : (msg['text'] ?? ''),
+                            imageUrl: msg['type'] == 'image'
+                                ? msg['text']
+                                : null,
+                            sender: msg['sender'] ?? 'Anon',
+                            isMe: isMe,
+                            timestamp: msg['timestamp'],
+                            isRead: msg['read'] == true,
+                          ),
+                        ),
+                      ),
+                    ],
                   );
                 },
               ),
             ),
 
-            // 2. ПЛАВАЮЧА ПАНЕЛЬ ВВОДУ (Positioned знизу)
+            // 3. ПЛАВАЮЧА ПАНЕЛЬ ВВОДУ
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
               child: Container(
-                // Робимо легке розмиття фону під кнопками для кращої читабельності
                 padding: EdgeInsets.fromLTRB(
                   10,
                   20,
                   10,
                   10 + MediaQuery.of(context).padding.bottom,
                 ),
-
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.transparent,
-                      AppColors.bgGradientBot.withOpacity(
-                        0.8,
-                      ), // М'яке затінення фону
+                      AppColors.bgGradientBot.withOpacity(0.8),
                     ],
                   ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    // Кнопка +
                     _buildFloatingButton(
                       icon: Icons.add,
                       onPressed: _pickAndUploadImage,
                     ),
                     const SizedBox(width: 8),
-                    // Овальне поле
                     Expanded(
                       child: GlassBox(
                         borderRadius: 30,
@@ -808,8 +990,12 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: TextField(
                           controller: textController,
                           onChanged: (text) {
-                            if (text.isNotEmpty)
-                              socket.emit('typing', {'username': myName});
+                            if (text.isNotEmpty) {
+                              socket.emit('typing', {
+                                'username': myName,
+                                'roomId': 'general',
+                              });
+                            }
                           },
                           style: const TextStyle(color: Colors.white),
                           maxLines: 5,
@@ -827,7 +1013,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // Кнопка стрілка
                     _buildFloatingButton(
                       icon: Icons.arrow_upward,
                       onPressed: sendMessage,
