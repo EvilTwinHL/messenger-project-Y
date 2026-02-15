@@ -137,7 +137,7 @@ class GlassBox extends StatelessWidget {
             borderRadius: BorderRadius.circular(borderRadius),
             border:
                 border ??
-                Border.all(color: Colors.white.withOpacity(0.1), width: 1.0),
+                Border.all(color: Colors.white.withOpacity(0.1), width: 0.3),
           ),
           child: child,
         ),
@@ -267,13 +267,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Container(
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.mainColor.withOpacity(0.4),
-                              blurRadius: 20,
-                              spreadRadius: 5,
-                            ),
-                          ],
+                          //boxShadow: [
+                          //BoxShadow(
+                          // color: AppColors.mainColor.withOpacity(0.4),
+                          //blurRadius: 20,
+                          // spreadRadius: 5,
+                          //),
+                          //],
                         ),
                         child: CircleAvatar(
                           radius: 50,
@@ -327,8 +327,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          elevation: 10,
-                          shadowColor: AppColors.mainColor.withOpacity(0.5),
+                          elevation: 0,
+                          //shadowColor: AppColors.mainColor.withOpacity(0.5),
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(
@@ -691,7 +691,7 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(60),
         child: GlassBox(
-          borderRadius: 0,
+          //borderRadius: 0,
           blur: 15,
           opacity: 0.1,
           child: AppBar(
@@ -776,6 +776,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   10,
                   10 + MediaQuery.of(context).padding.bottom,
                 ),
+
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
