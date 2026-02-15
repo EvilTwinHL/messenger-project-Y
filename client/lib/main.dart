@@ -488,17 +488,12 @@ class _ChatScreenState extends State<ChatScreen> {
           'token': token,
           'username': widget.username,
         });
+      // 🔥 ВИДАЛЕНО: SnackBar при отриманні повідомлень
+      // Повідомлення вже відображаються в реальному часі через Socket.IO
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        if (mounted && message.notification != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                "${message.notification!.title}: ${message.notification!.body}",
-              ),
-              backgroundColor: AppColors.mainColor,
-            ),
-          );
-        }
+        // Push-повідомлення отримано, але не показуємо SnackBar
+        // бо користувач вже бачить повідомлення в чаті
+        print("📱 Push received: ${message.notification?.title}");
       });
     } catch (e) {
       _logToServer("Push Error: $e");
