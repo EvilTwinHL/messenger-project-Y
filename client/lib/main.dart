@@ -493,6 +493,15 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+
+    // 🔥 6. СЛУХАЄМО ВИДАЛЕННЯ ПОВІДОМЛЕНЬ
+    socket.on('message_deleted', (messageId) {
+      if (mounted && messageId != null) {
+        setState(() {
+          messages.removeWhere((msg) => msg['id'] == messageId);
+        });
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -536,6 +545,33 @@ class _ChatScreenState extends State<ChatScreen> {
       'type': type,
     });
     textController.clear();
+  }
+
+  // 🔥 7. ФУНКЦІЯ ДЛЯ ПІДТВЕРДЖЕННЯ ВИДАЛЕННЯ
+  void _showDeleteConfirmDialog(String messageId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Видалити повідомлення?"),
+        content: const Text(
+          "Це повідомлення буде видалено у всіх користувачів.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Ні"),
+          ),
+          TextButton(
+            onPressed: () {
+              // Відправляємо сигнал на видалення
+              socket.emit('delete_message', messageId);
+              Navigator.pop(ctx);
+            },
+            child: const Text("Видалити", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -606,14 +642,24 @@ class _ChatScreenState extends State<ChatScreen> {
                 final String content = msg['text'] ?? '';
                 final String? avatar = msg['senderAvatar'];
                 final dynamic timestamp = msg['timestamp'];
+                final String? msgId = msg['id']; // Отримуємо ID для видалення
 
-                return MessageBubble(
-                  text: isImage ? '' : content,
-                  imageUrl: isImage ? content : null,
-                  sender: msg['sender'] ?? 'Anon',
-                  isMe: isMe,
-                  avatarUrl: avatar,
-                  timestamp: timestamp,
+                // 🔥 8. ОБГОРТАЄМО У GestureDetector ДЛЯ LongPress
+                return GestureDetector(
+                  onLongPress: () {
+                    // Дозволяємо видаляти тільки свої повідомлення
+                    if (isMe && msgId != null) {
+                      _showDeleteConfirmDialog(msgId);
+                    }
+                  },
+                  child: MessageBubble(
+                    text: isImage ? '' : content,
+                    imageUrl: isImage ? content : null,
+                    sender: msg['sender'] ?? 'Anon',
+                    isMe: isMe,
+                    avatarUrl: avatar,
+                    timestamp: timestamp,
+                  ),
                 );
               },
             ),
