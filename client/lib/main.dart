@@ -1,6 +1,6 @@
 ﻿import 'dart:convert';
 import 'dart:io';
-import 'dart:async'; // 🔥 1. Додано для таймера
+import 'dart:async';
 import 'package:flutter/foundation.dart'; // Для перевірки kIsWeb
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
@@ -225,7 +225,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ (ЗБЕРЕЖЕНО ОРИГІНАЛЬНУ ЛОГІКУ)
+// 💬 ЕКРАН ЧАТУ
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -574,6 +574,42 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // 🔥🔥🔥 НОВІ ФУНКЦІЇ ДЛЯ ДАТ (ГРУПУВАННЯ) 🔥🔥🔥
+  DateTime _parseDate(dynamic timestamp) {
+    if (timestamp == null) return DateTime.now();
+    try {
+      if (timestamp is String) {
+        return DateTime.parse(timestamp);
+      } else if (timestamp is Map && timestamp['_seconds'] != null) {
+        return DateTime.fromMillisecondsSinceEpoch(
+          timestamp['_seconds'] * 1000,
+        );
+      }
+    } catch (e) {
+      // ignore error
+    }
+    return DateTime.now();
+  }
+
+  bool _isSameDay(DateTime d1, DateTime d2) {
+    return d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
+  }
+
+  String _getDateLabel(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final checkDate = DateTime(date.year, date.month, date.day);
+
+    if (checkDate == today) {
+      return "Сьогодні";
+    } else if (checkDate == yesterday) {
+      return "Вчора";
+    } else {
+      return "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
+    }
+  }
+
   @override
   void dispose() {
     socket.dispose();
@@ -644,46 +680,68 @@ class _ChatScreenState extends State<ChatScreen> {
                 final dynamic timestamp = msg['timestamp'];
                 final String? msgId = msg['id']; // Отримуємо ID для видалення
 
-                // 🔥 8. ОБГОРТАЄМО У GestureDetector ДЛЯ LongPress
-                return GestureDetector(
-                  onLongPress: () {
-                    // ДІАГНОСТИКА
-                    if (!isMe) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            "Можна видаляти тільки свої повідомлення",
+                // 🔥 ЛОГІКА ДЛЯ ВІДОБРАЖЕННЯ ДАТИ
+                final DateTime msgDate = _parseDate(timestamp);
+                bool showDateHeader = false;
+
+                if (index == 0) {
+                  showDateHeader = true; // Перше повідомлення завжди має дату
+                } else {
+                  final prevMsgDate = _parseDate(
+                    messages[index - 1]['timestamp'],
+                  );
+                  if (!_isSameDay(msgDate, prevMsgDate)) {
+                    showDateHeader = true; // Якщо день змінився
+                  }
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // --- ЗАГОЛОВОК ДАТИ ---
+                    if (showDateHeader)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16.0),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              _getDateLabel(msgDate),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black54,
+                              ),
+                            ),
                           ),
                         ),
-                      );
-                      return;
-                    }
+                      ),
 
-                    if (msgId == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            "Помилка: Це повідомлення не має ID. Перезапустіть сервер.",
-                          ),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      // Для відладки виведемо в консоль весь об'єкт повідомлення
-                      print("DEBUG MESSAGE DATA: $msg");
-                      return;
-                    }
-
-                    // Якщо все добре - показуємо діалог
-                    _showDeleteConfirmDialog(msgId);
-                  },
-                  child: MessageBubble(
-                    text: isImage ? '' : content,
-                    imageUrl: isImage ? content : null,
-                    sender: msg['sender'] ?? 'Anon',
-                    isMe: isMe,
-                    avatarUrl: avatar,
-                    timestamp: timestamp,
-                  ),
+                    // --- ПОВІДОМЛЕННЯ З ВИДАЛЕННЯМ ---
+                    GestureDetector(
+                      onLongPress: () {
+                        // Дозволяємо видаляти тільки свої повідомлення
+                        if (isMe && msgId != null) {
+                          _showDeleteConfirmDialog(msgId);
+                        }
+                      },
+                      child: MessageBubble(
+                        text: isImage ? '' : content,
+                        imageUrl: isImage ? content : null,
+                        sender: msg['sender'] ?? 'Anon',
+                        isMe: isMe,
+                        avatarUrl: avatar,
+                        timestamp: timestamp,
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -696,7 +754,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  "$_typingUser набирає повідомлення... ✍️",
+                  "$_typingUser typing text...✍️",
                   style: TextStyle(
                     fontSize: 12,
                     fontStyle: FontStyle.italic,
@@ -774,7 +832,7 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Форматування часу (потрібно додати intl package або просту функцію)
+    // Форматування часу
     final timeText = _formatTime(timestamp);
 
     return Padding(
@@ -870,12 +928,8 @@ class MessageBubble extends StatelessWidget {
                       ),
                       if (isMe) ...[
                         const SizedBox(width: 4),
-                        // 🔥 ВИПРАВЛЕННЯ: Показуємо "Надіслано" (одна галочка), а не "Прочитано"
-                        const Icon(
-                          Icons.check, // Була Icons.done_all
-                          size: 12,
-                          color: Colors.grey, // Був Colors.blue
-                        ),
+                        // 🔥 ВИПРАВЛЕННЯ: Показуємо "Надіслано" (одна галочка)
+                        const Icon(Icons.check, size: 12, color: Colors.grey),
                       ],
                     ],
                   ),
