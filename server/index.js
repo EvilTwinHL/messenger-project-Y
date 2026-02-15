@@ -184,7 +184,8 @@ io.on('connection', async (socket) => {
             senderAvatar: data.senderAvatar || null,
             type: data.type || 'text',
             imageUrl: data.imageUrl || null,
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            read: false // 🔥 НОВЕ: По замовчуванню непрочитане
         };
 
         // А) 🔥 ЗМІНА: Зберігаємо і отримуємо посилання (docRef), щоб знати ID
@@ -194,6 +195,7 @@ io.on('connection', async (socket) => {
         const savedMessage = {
             id: docRef.id, // <--- ID з бази
             ...data,       // Дані від клієнта
+            read: false,   // 🔥
             timestamp: new Date().toISOString() // Тимчасовий час для відображення одразу
         };
         
@@ -233,7 +235,7 @@ io.on('connection', async (socket) => {
         socket.broadcast.emit('display_typing', data);
     });
 
-    // --- 5. 🔥 ВИДАЛЕННЯ ПОВІДОМЛЕННЯ (НОВЕ) ---
+    // --- 5. 🔥 ВИДАЛЕННЯ ПОВІДОМЛЕННЯ ---
     socket.on('delete_message', async (messageId) => {
         console.log(`🗑️ Запит на видалення повідомлення: ${messageId}`);
         try {
@@ -247,6 +249,18 @@ io.on('connection', async (socket) => {
         }
     });
 
+    // --- 6. 🔥 СТАТУС ПРОЧИТАНО (НОВЕ) ---
+    socket.on('mark_read', async (data) => {
+        // data = { messageId: "...", reader: "UserB" }
+        // Або можна просто відправляти сигнал "всі повідомлення прочитані цим користувачем"
+        
+        console.log(`👀 Хтось прочитав повідомлення`);
+        
+        // Тут можна оновити конкретне повідомлення в БД, 
+        // але для простоти поки просто скажемо всім: "Оновити статус"
+        io.emit('message_read_update', data); 
+    });
+
     socket.on('disconnect', () => {
         console.log(`[DISC] Відключено: ${socket.id}`);
     });
@@ -256,4 +270,4 @@ server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
 
-// update server for function 'delete messeg'
+// add function 'real ststus deliverey messege'
