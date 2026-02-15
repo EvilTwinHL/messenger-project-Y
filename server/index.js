@@ -156,12 +156,19 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ ---
+    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ (ВИПРАВЛЕНО) ---
     try {
         const messagesRef = db.collection('messages');
-        const snapshot = await messagesRef.orderBy('timestamp', 'asc').limit(50).get();
-        const history = [];
-        snapshot.forEach(doc => history.push(doc.data()));
+        
+        // 1. Беремо 50 НАЙНОВІШИХ повідомлень ('desc' - спадання)
+        const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(50).get();
+        
+        // 2. Отримуємо дані з документів
+        let history = snapshot.docs.map(doc => doc.data());
+
+        // 3. Розвертаємо масив, щоб у чаті вони йшли [старе -> нове] (знизу екрану — свіжі)
+        history = history.reverse();
+
         socket.emit('load_history', history);
     } catch (error) {
         console.error("Помилка історії:", error);
