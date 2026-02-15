@@ -568,6 +568,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          // --- 🔥 ТУТ ЗМІНЕНО: Використовуємо MessageBubble ---
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -578,88 +579,20 @@ class _ChatScreenState extends State<ChatScreen> {
                 final isImage = msg['type'] == 'image';
                 final String content = msg['text'] ?? '';
                 final String? avatar = msg['senderAvatar'];
+                final dynamic timestamp = msg['timestamp']; // Отримуємо час
 
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 5,
-                    horizontal: 10,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: isMe
-                        ? MainAxisAlignment.end
-                        : MainAxisAlignment.start,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (!isMe) ...[
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundImage: avatar != null
-                              ? NetworkImage(avatar)
-                              : null,
-                          backgroundColor: Colors.grey[300],
-                          child: avatar == null
-                              ? const Icon(
-                                  Icons.person,
-                                  size: 16,
-                                  color: Colors.grey,
-                                )
-                              : null,
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      Flexible(
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.blue[100] : Colors.white,
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(15),
-                              topRight: const Radius.circular(15),
-                              bottomLeft: isMe
-                                  ? const Radius.circular(15)
-                                  : const Radius.circular(0),
-                              bottomRight: isMe
-                                  ? const Radius.circular(0)
-                                  : const Radius.circular(15),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (!isMe)
-                                Text(
-                                  msg['sender'] ?? 'Anon',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              const SizedBox(height: 4),
-                              isImage
-                                  ? SizedBox(
-                                      width: 200,
-                                      child: Image.network(
-                                        content,
-                                        errorBuilder: (c, e, s) =>
-                                            const Icon(Icons.broken_image),
-                                      ),
-                                    )
-                                  : Text(
-                                      content,
-                                      style: const TextStyle(fontSize: 16),
-                                    ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                return MessageBubble(
+                  text: isImage ? '' : content,
+                  imageUrl: isImage ? content : null,
+                  sender: msg['sender'] ?? 'Anon',
+                  isMe: isMe,
+                  avatarUrl: avatar,
+                  timestamp: timestamp,
                 );
               },
             ),
           ),
+          // ----------------------------------------------------
           Container(
             padding: const EdgeInsets.all(8.0),
             color: Colors.white,
@@ -698,5 +631,164 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+}
+
+//--------NEW BUBBLE MESSEAG
+class MessageBubble extends StatelessWidget {
+  final String text;
+  final String sender;
+  final String? imageUrl;
+  final bool isMe;
+  final dynamic timestamp; // Час з Firebase
+  final String? avatarUrl;
+
+  const MessageBubble({
+    super.key,
+    required this.text,
+    required this.sender,
+    required this.isMe,
+    this.imageUrl,
+    this.timestamp,
+    this.avatarUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Форматування часу (потрібно додати intl package або просту функцію)
+    final timeText = _formatTime(timestamp);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      child: Row(
+        mainAxisAlignment: isMe
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Аватарка (тільки для співрозмовника)
+          if (!isMe) ...[
+            CircleAvatar(
+              backgroundImage: avatarUrl != null
+                  ? NetworkImage(avatarUrl!)
+                  : null,
+              radius: 16,
+              child: avatarUrl == null
+                  ? Text(
+                      sender.isNotEmpty ? sender[0].toUpperCase() : "?",
+                      style: const TextStyle(fontSize: 12),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 8),
+          ],
+
+          // Сама бульбашка
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+              decoration: BoxDecoration(
+                color: isMe
+                    ? Colors.indigo[100]
+                    : Colors.grey[200], // Кольори як у Telegram
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: isMe
+                      ? const Radius.circular(16)
+                      : const Radius.circular(0), // "Хвостик" зліва
+                  bottomRight: isMe
+                      ? const Radius.circular(0)
+                      : const Radius.circular(16), // "Хвостик" справа
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: isMe
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.start,
+                children: [
+                  // Ім'я автора (тільки в групах, якщо не я)
+                  if (!isMe)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        sender,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.indigo[800],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+
+                  // Картинка (якщо є)
+                  if (imageUrl != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5, bottom: 5),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8.0),
+                        child: Image.network(
+                          imageUrl!,
+                          height: 200, // Обмежуємо висоту
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+
+                  // Текст повідомлення
+                  if (text.isNotEmpty)
+                    Text(text, style: const TextStyle(fontSize: 16)),
+
+                  const SizedBox(height: 4),
+
+                  // Час та галочки
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        timeText,
+                        style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        // 🔥 ВИПРАВЛЕННЯ: Показуємо "Надіслано" (одна галочка), а не "Прочитано"
+                        const Icon(
+                          Icons.check, // Була Icons.done_all
+                          size: 12,
+                          color: Colors.grey, // Був Colors.blue
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Проста функція для часу
+  String _formatTime(dynamic timestamp) {
+    if (timestamp == null) {
+      final now = DateTime.now();
+      return "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
+    }
+    try {
+      DateTime date;
+      if (timestamp is String) {
+        date = DateTime.parse(timestamp);
+      } else if (timestamp is Map && timestamp['_seconds'] != null) {
+        date = DateTime.fromMillisecondsSinceEpoch(
+          timestamp['_seconds'] * 1000,
+        );
+      } else {
+        return '';
+      }
+      return "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+    } catch (e) {
+      return '';
+    }
   }
 }
