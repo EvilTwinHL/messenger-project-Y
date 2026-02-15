@@ -223,6 +223,12 @@ io.on('connection', async (socket) => {
         }
     });
 
+    // --- 4. ІНДИКАТОР НАБОРУ (НОВЕ) ---
+    // Отримуємо подію, що хтось пише, і розсилаємо всім іншим
+    socket.on('typing', (data) => {
+        socket.broadcast.emit('display_typing', data);
+    });
+
     socket.on('disconnect', () => {
         console.log(`[DISC] Відключено: ${socket.id}`);
     });
