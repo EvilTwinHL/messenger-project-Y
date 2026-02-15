@@ -23,7 +23,7 @@ class AppColors {
   static const Color mainColor = Color(0xFF3A76F0); // Signal Blue
 
   // 🌑 ГРАДІЄНТ ФОНУ (Від верху до низу)
-  static const Color bgGradientTop = Color(0x1Affffff); // Темний
+  static const Color bgGradientTop = Color(0xFF1b1e28); // Темний
   static const Color bgGradientMid = Color(0xFF1b1e28); // Середній
   static const Color bgGradientBot = Color(0xFF1b1e28); // Світліший низ
 
@@ -686,72 +686,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 🎨 ФОНОВИЙ ГРАДІЄНТ
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(60),
         child: GlassBox(
-          // 🔥 GLASS APP BAR
           borderRadius: 0,
           blur: 15,
           opacity: 0.1,
-          border: const Border(bottom: BorderSide.none), // Без рамки
           child: AppBar(
-            backgroundColor: Colors.transparent,
+            backgroundColor: Colors.black.withValues(alpha: 0.3),
             elevation: 0,
             centerTitle: true,
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.avatarUrl != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: CircleAvatar(
-                      backgroundImage: NetworkImage(widget.avatarUrl!),
-                      radius: 14,
-                    ),
-                  ),
-                const Text(
-                  "Glass Chat",
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
+            title: Text(
+              "Chat",
+              style: TextStyle(fontSize: 17, color: Colors.white),
             ),
             actions: [
-              // Кнопка оновлення
-              Stack(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.system_update,
-                      color: _isUpdateAvailable
-                          ? AppColors.mainColor
-                          : Colors.white70,
-                    ),
-                    onPressed: _manualCheckForUpdate,
-                  ),
-                  if (_isUpdateAvailable)
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
+              IconButton(
+                icon: Icon(
+                  Icons.system_update,
+                  color: _isUpdateAvailable
+                      ? AppColors.mainColor
+                      : Colors.white70,
+                ),
+                onPressed: _manualCheckForUpdate,
               ),
               IconButton(
-                icon: const Icon(Icons.exit_to_app, color: Colors.white70),
+                icon: const Icon(Icons.exit_to_app),
                 onPressed: _logout,
               ),
             ],
@@ -760,7 +722,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Container(
         decoration: const BoxDecoration(
-          // Глибокий градієнт для ефекту "Liquid Glass"
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -771,183 +732,135 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
-        child: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = messages[index];
-                    final isMe = msg['sender'] == myName;
-                    final isImage = msg['type'] == 'image';
-                    final String content = msg['text'] ?? '';
-                    final dynamic timestamp = msg['timestamp'];
-                    final String? msgId = msg['id'];
-                    final bool isRead = msg['read'] == true;
-
-                    final DateTime msgDate = _parseDate(timestamp);
-                    bool showDateHeader = false;
-                    if (index == 0) {
-                      showDateHeader = true;
-                    } else {
-                      final prevMsgDate = _parseDate(
-                        messages[index - 1]['timestamp'],
-                      );
-                      if (!_isSameDay(msgDate, prevMsgDate))
-                        showDateHeader = true;
-                    }
-
-                    return Column(
-                      children: [
-                        if (showDateHeader)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 20.0),
-                            child: GlassBox(
-                              borderRadius: 20,
-                              opacity: 0.15,
-                              blur: 5,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 4,
-                                ),
-                                child: Text(
-                                  _getDateLabel(msgDate),
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white70,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-
-                        GestureDetector(
-                          onLongPress: () {
-                            if (isMe && msgId != null)
-                              _showDeleteConfirmDialog(msgId);
-                          },
-                          child: MessageBubble(
-                            text: isImage ? '' : content,
-                            imageUrl: isImage ? content : null,
-                            sender: msg['sender'] ?? 'Anon',
-                            isMe: isMe,
-                            avatarUrl: msg['senderAvatar'],
-                            timestamp: timestamp,
-                            isRead: isRead,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+        child: Stack(
+          // 🔥 Використовуємо Stack, щоб панель плавала зверху
+          children: [
+            // 1. СПИСОК ПОВІДОМЛЕНЬ
+            Positioned.fill(
+              child: ListView.builder(
+                controller: _scrollController,
+                // Додаємо відступ знизу, щоб повідомлення не ховалися ПІД панеллю в самому кінці
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 100,
+                  bottom: 100 + MediaQuery.of(context).padding.bottom,
                 ),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  // ... (Ваш існуючий itemBuilder для MessageBubble) ...
+                  final msg = messages[index];
+                  final isMe = msg['sender'] == myName;
+                  return MessageBubble(
+                    text: msg['type'] == 'image' ? '' : (msg['text'] ?? ''),
+                    imageUrl: msg['type'] == 'image' ? msg['text'] : null,
+                    sender: msg['sender'] ?? 'Anon',
+                    isMe: isMe,
+                    timestamp: msg['timestamp'],
+                    isRead: msg['read'] == true,
+                  );
+                },
               ),
+            ),
 
-              // 🔥 5. ІНДИКАТОР НАБОРУ
-              if (_isTyping)
-                Padding(
-                  padding: const EdgeInsets.only(left: 20, bottom: 5),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      "$_typingUser друкує... ",
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontStyle: FontStyle.italic,
-                        color: AppColors.mainColor,
-                      ),
-                    ),
-                  ),
+            // 2. ПЛАВАЮЧА ПАНЕЛЬ ВВОДУ (Positioned знизу)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                // Робимо легке розмиття фону під кнопками для кращої читабельності
+                padding: EdgeInsets.fromLTRB(
+                  10,
+                  20,
+                  10,
+                  10 + MediaQuery.of(context).padding.bottom,
                 ),
-
-              // 🔥 ПЛАВАЮЧА ПАНЕЛЬ ВВОДУ (ТРИ ЕЛЕМЕНТИ)
-              Padding(
-                padding: const EdgeInsets.only(left: 10, right: 10, bottom: 10),
-                // Відступ для "плаваючого" ефекту
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    bottom: MediaQuery.of(context).padding.bottom,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      // 1. КНОПКА ДОДАТИ (+)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 2),
-                        decoration: const BoxDecoration(
-                          color: AppColors.mainColor,
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          icon: const Icon(Icons.add, color: Colors.white),
-                          onPressed: _pickAndUploadImage,
-                        ),
-                      ),
-
-                      const SizedBox(width: 8),
-
-                      // 2. ОВАЛЬНЕ ПОЛЕ ВВОДУ (GLASS)
-                      Expanded(
-                        child: GlassBox(
-                          borderRadius: 30, // Сильне заокруглення (овал)
-                          opacity: 0.1,
-                          blur: 20,
-                          border: Border.all(color: Colors.white12),
-                          child: TextField(
-                            controller: textController,
-                            onChanged: (text) {
-                              if (text.isNotEmpty)
-                                socket.emit('typing', {'username': myName});
-                            },
-                            style: const TextStyle(color: Colors.white),
-                            minLines: 1,
-                            maxLines: 5,
-                            decoration: const InputDecoration(
-                              hintText: "Повідомлення...",
-                              hintStyle: TextStyle(color: Colors.white38),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 12,
-                              ),
-                            ),
-                            onSubmitted: (_) => sendMessage(),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 8),
-
-                      // 3. КНОПКА ВІДПРАВИТИ (->)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 2),
-                        decoration: const BoxDecoration(
-                          color: AppColors.mainColor,
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.arrow_upward,
-                            color: Colors.white,
-                          ), // 🔥 Стрілка тепер біла на синьому
-                          onPressed: sendMessage,
-                        ),
-                      ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      AppColors.bgGradientBot.withOpacity(
+                        0.8,
+                      ), // М'яке затінення фону
                     ],
                   ),
                 ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Кнопка +
+                    _buildFloatingButton(
+                      icon: Icons.add,
+                      onPressed: _pickAndUploadImage,
+                    ),
+                    const SizedBox(width: 8),
+                    // Овальне поле
+                    Expanded(
+                      child: GlassBox(
+                        borderRadius: 30,
+                        opacity: 0.15,
+                        blur: 20,
+                        border: Border.all(color: Colors.white12),
+                        child: TextField(
+                          controller: textController,
+                          onChanged: (text) {
+                            if (text.isNotEmpty)
+                              socket.emit('typing', {'username': myName});
+                          },
+                          style: const TextStyle(color: Colors.white),
+                          maxLines: 5,
+                          minLines: 1,
+                          decoration: const InputDecoration(
+                            hintText: "Повідомлення...",
+                            hintStyle: TextStyle(color: Colors.white38),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Кнопка стрілка
+                    _buildFloatingButton(
+                      icon: Icons.arrow_upward,
+                      onPressed: sendMessage,
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  // Допоміжний метод для круглих кнопок
+  Widget _buildFloatingButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.mainColor,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.mainColor.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: IconButton(
+        icon: Icon(icon, color: Colors.white),
+        onPressed: onPressed,
       ),
     );
   }
