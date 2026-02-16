@@ -250,7 +250,7 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // --- 6. 🔥 СТАТУС ПРОЧИТАНО (НОВЕ) ---
+    // --- 6. 🔥 СТАТУС ПРОЧИТАНО ---
     socket.on('mark_read', async (data) => {
         // data = { messageId: "...", reader: "UserB" }
         // Або можна просто відправляти сигнал "всі повідомлення прочитані цим користувачем"
@@ -261,6 +261,46 @@ io.on('connection', async (socket) => {
         // але для простоти поки просто скажемо всім: "Оновити статус"
         io.emit('message_read_update', data); 
     });
+ 
+
+    // --- 7. Додаємо реакції (НОВЕ) ---
+    socket.on('add_reaction', async ({ messageId, emoji, username }) => {
+    try {
+         const messageRef = db.collection('messages').doc(messageId);
+         const messageDoc = await messageRef.get();
+        
+          if (!messageDoc.exists) return;
+        
+         const messageData = messageDoc.data();
+         const currentReactions = messageData.reactions || {};
+        
+          if (!currentReactions[emoji]) {
+            currentReactions[emoji] = [];
+        }
+        
+        const userIndex = currentReactions[emoji].indexOf(username);
+         if (userIndex === -1) {
+            // Додаємо реакцію
+            currentReactions[emoji].push(username);
+         } else {
+            // Видаляємо (toggle)
+            currentReactions[emoji].splice(userIndex, 1);
+            if (currentReactions[emoji].length === 0) {
+                delete currentReactions[emoji];
+            }
+        }
+        
+        await messageRef.update({ reactions: currentReactions });
+        
+        io.to(messageData.roomId || 'general').emit('reaction_updated', {
+            messageId,
+            reactions: currentReactions
+        });
+     } catch (error) {
+        console.error("Помилка реакції:", error);
+    }
+    });
+
 
     socket.on('disconnect', () => {
         console.log(`[DISC] Відключено: ${socket.id}`);
