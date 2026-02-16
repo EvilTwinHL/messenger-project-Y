@@ -1027,8 +1027,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         onReply: () => _setReplyTo(msg),
                         replyIconColor: isMe
                             ? Colors
-                                  .blue // Для своїх
-                            : Colors.green, // Для чужих
+                                  .white // Для своїх
+                            : Colors.white, // Для чужих
                         child: GestureDetector(
                           onLongPress: () => _showContextMenu(context, msg),
                           child: AnimatedMessageBubble(
@@ -1105,7 +1105,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             }
                           },
                           style: const TextStyle(color: Colors.white),
-                          maxLines: 5,
+                          maxLines: 6,
                           minLines: 1,
                           decoration: const InputDecoration(
                             hintText: "Повідомлення...",
@@ -1202,7 +1202,7 @@ class ReplyPreview extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               replyTo!['text'] ?? '',
-              maxLines: 2,
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: Colors.white.withOpacity(0.7),
@@ -1369,7 +1369,11 @@ class MessageBubble extends StatelessWidget {
         // 🔥 НОВИЙ КОД: Реакції під повідомленням
         if (reactions != null && reactions!.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(left: 12, right: 12, top: 4),
+            padding: const EdgeInsets.only(
+              top: -13,
+              left: 8,
+              right: 8,
+            ), // 🔥 12→8, 4→2 компактніше
             child: ReactionsDisplay(
               reactions: reactions,
               currentUsername: currentUsername,
@@ -1407,6 +1411,7 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+//---------+++++-------+++++++++--------++++++++--------++++++++------++++++++++++
 // =======================
 // ❤️ REACTION PICKER WIDGET
 // =======================
@@ -1476,10 +1481,10 @@ class ReactionsDisplay extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.only(top: 0), // 🔥 4 → 2 ближче до повідомлення
       child: Wrap(
-        spacing: 6, // 🔥 4 → 6 для більшого простору
-        runSpacing: 6,
+        spacing: 2, // 🔥 6 → 3 компактніше
+        runSpacing: 3,
         children: reactions!.entries.map((entry) {
           final emoji = entry.key;
           final users = List<String>.from(entry.value);
@@ -1488,31 +1493,32 @@ class ReactionsDisplay extends StatelessWidget {
           return GestureDetector(
             onTap: () => onReactionTap(emoji),
             child: Container(
-              // 🔥 НОВИЙ ДИЗАЙН: круглий контейнер як в Signal
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              // 🔥 КОМПАКТНИЙ ДИЗАЙН як в Signal
+              padding: const EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 3,
+              ), // 🔥 10×6 → 6×3
               decoration: BoxDecoration(
-                // Темний фон, трохи світліший якщо своя реакція
                 color: hasMyReaction
-                    ? Colors.grey[800]?.withOpacity(0.9) // Світліший для своїх
-                    : Colors.grey[900]?.withOpacity(0.8), // Темніший для чужих
-                borderRadius: BorderRadius.circular(
-                  20,
-                ), // Більший radius для круглості
-                // 🔥 БЕЗ border як в Signal
+                    ? Colors.grey[900]?.withOpacity(0.7)
+                    : Colors.grey[900]?.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
+                // 🔥 20 → 12 менш круглий
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     emoji,
-                    style: const TextStyle(fontSize: 18), // 🔥 16 → 18
+                    style: const TextStyle(fontSize: 14), // 🔥 18 → 14 менше
                   ),
                   if (users.length > 1) ...[
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 3), // 🔥 4 → 3
                     Text(
                       '${users.length}',
                       style: const TextStyle(
-                        fontSize: 13, // 🔥 12 → 13
+                        fontSize: 11, // 🔥 13 → 11 менше
                         color: Colors.white70,
                         fontWeight: FontWeight.w600,
                       ),

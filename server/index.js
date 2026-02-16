@@ -303,6 +303,48 @@ io.on('connection', async (socket) => {
     });
 
 
+    // --- 8. 🔥 РЕДАГУВАННЯ ПОВІДОМЛЕНЬ ---
+    socket.on('edit_message', async ({ messageId, newText, username }) => {
+        console.log(`✏️ Редагування повідомлення: ${messageId}`);
+        try {
+            const messageRef = db.collection('messages').doc(messageId);
+            const messageDoc = await messageRef.get();
+            
+            if (!messageDoc.exists) {
+                socket.emit('error', { message: 'Повідомлення не знайдено' });
+                return;
+            }
+            
+            const messageData = messageDoc.data();
+            
+            // Перевірка: чи користувач є автором
+            if (messageData.sender !== username) {
+                socket.emit('error', { message: 'Ви не можете редагувати це повідомлення' });
+                return;
+            }
+            
+            // Оновлюємо
+            await messageRef.update({
+                text: newText,
+                edited: true,
+                editedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            
+            // Повідомляємо всіх
+            io.emit('message_edited', {
+                messageId,
+                newText,
+                edited: true
+            });
+            
+            console.log(`✅ Повідомлення відредаговано`);
+        } catch (error) {
+            console.error("Помилка редагування:", error);
+            socket.emit('error', { message: 'Помилка редагування' });
+        }
+    });
+
+
     socket.on('disconnect', () => {
         console.log(`[DISC] Відключено: ${socket.id}`);
     });
