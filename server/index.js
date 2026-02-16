@@ -184,6 +184,7 @@ io.on('connection', async (socket) => {
             senderAvatar: data.senderAvatar || null,
             type: data.type || 'text',
             imageUrl: data.imageUrl || null,
+            replyTo: data.replyTo || null,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             read: false // 🔥 НОВЕ: По замовчуванню непрочитане
         };
