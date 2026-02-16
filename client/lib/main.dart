@@ -1,10 +1,10 @@
 ﻿import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
-import 'dart:ui'; // 🔥 Потрібно для ефекту скла (ImageFilter)
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Для налаштування статус бару
+import 'package:flutter/services.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'animated_widgets.dart';
+import 'package:vibration/vibration.dart';
+import 'package:flutter/services.dart';
 
 // ==========================================
 // 🎨 НАЛАШТУВАННЯ КОЛЬОРІВ ТА СЕРВЕРА
@@ -20,28 +22,16 @@ import 'animated_widgets.dart';
 const String serverUrl = 'https://pproject-y.onrender.com';
 
 class AppColors {
-  // 🔥 ГОЛОВНИЙ КОЛІР (Змінюйте цей для кнопок та своїх повідомлень)
-  static const Color mainColor = Color(0xFF3A76F0); // Signal Blue
-
-  // 🌑 ГРАДІЄНТ ФОНУ (Від верху до низу)
-  static const Color bgGradientTop = Color(0xFF1b1e28); // Темний
-  static const Color bgGradientMid = Color(0xFF1b1e28); // Середній
-  static const Color bgGradientBot = Color(0xFF1b1e28); // Світліший низ
-
-  // 💬 КОЛЬОРИ ПОВІДОМЛЕНЬ
-  static const Color bubbleMeStart =
-      mainColor; // Градієнт моїх повідомлень (початок)
-  static const Color bubbleMeEnd = Color(
-    0xCC2C61D6,
-  ); // Градієнт моїх повідомлень (кінець)
-  static const Color bubbleOther =
-      Colors.white; // Колір чужих (основа для скла)
-
-  // ⚪ ІНШЕ
+  static const Color mainColor = Color(0xFF3A76F0);
+  static const Color bgGradientTop = Color(0xFF1b1e28);
+  static const Color bgGradientMid = Color(0xFF1b1e28);
+  static const Color bgGradientBot = Color(0xFF1b1e28);
+  static const Color bubbleMeStart = mainColor;
+  static const Color bubbleMeEnd = Color(0xCC2C61D6);
+  static const Color bubbleOther = Colors.white;
   static const Color white = Colors.white;
-  static const Color whiteGlass = Colors.white10; // Прозорість скла
+  static const Color whiteGlass = Colors.white10;
 }
-// ==========================================
 
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("🌙 Фонове повідомлення: ${message.notification?.title}");
@@ -50,7 +40,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Робимо статус бар прозорим для ефекту на весь екран
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -92,7 +81,6 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Glass Messenger',
-      // Темна тема за замовчуванням для кращого ефекту скла
       theme: ThemeData.dark().copyWith(
         primaryColor: AppColors.mainColor,
         scaffoldBackgroundColor: const Color(0xFF121212),
@@ -107,9 +95,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// =======================
-// 💎 WIDGET: GLASS CONTAINER (Ефект скла)
-// =======================
 class GlassBox extends StatelessWidget {
   final Widget child;
   final double borderRadius;
@@ -122,7 +107,7 @@ class GlassBox extends StatelessWidget {
     required this.child,
     this.borderRadius = 0,
     this.blur = 10.0,
-    this.opacity = 0.1, // Більш прозоре за замовчуванням
+    this.opacity = 0.1,
     this.border,
   });
 
@@ -167,9 +152,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
-      setState(() {
-        _avatarFile = File(image.path);
-      });
+      setState(() => _avatarFile = File(image.path));
     }
   }
 
@@ -265,22 +248,19 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     GestureDetector(
                       onTap: _pickAvatar,
-                      child: Container(
-                        decoration: BoxDecoration(shape: BoxShape.circle),
-                        child: CircleAvatar(
-                          radius: 50,
-                          backgroundColor: Colors.white.withOpacity(0.1),
-                          backgroundImage: _avatarFile != null
-                              ? FileImage(_avatarFile!)
-                              : null,
-                          child: _avatarFile == null
-                              ? const Icon(
-                                  Icons.add_a_photo,
-                                  size: 40,
-                                  color: Colors.white70,
-                                )
-                              : null,
-                        ),
+                      child: CircleAvatar(
+                        radius: 50,
+                        backgroundColor: Colors.white.withOpacity(0.1),
+                        backgroundImage: _avatarFile != null
+                            ? FileImage(_avatarFile!)
+                            : null,
+                        child: _avatarFile == null
+                            ? const Icon(
+                                Icons.add_a_photo,
+                                size: 40,
+                                color: Colors.white70,
+                              )
+                            : null,
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -346,7 +326,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ (З УСІМА ПОКРАЩЕННЯМИ)
+// 💬 ЕКРАН ЧАТУ З REPLY
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -373,8 +353,12 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _typingUser;
   Timer? _typingTimer;
 
-  // 🔥 НОВИЙ КОД: Онлайн користувачі
   List<String> _onlineUsers = [];
+
+  // 🔥 НОВИЙ КОД: Reply змінні
+  String? _replyToMessageId;
+  String? _replyToText;
+  String? _replyToSender;
 
   @override
   void initState() {
@@ -387,7 +371,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _checkShorebirdSilent();
   }
 
-  // --- ЛОГІКА (БЕЗ ЗМІН) ---
   Future<void> _checkShorebirdSilent() async {
     try {
       if (!_updater.isAvailable) return;
@@ -413,10 +396,11 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!mounted) return;
         _showUpdateDialog();
       } else {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text("Версія актуальна!")));
+        }
       }
     } catch (e) {
       _logToServer("Update error: $e");
@@ -483,16 +467,14 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await messaging.requestPermission();
       String? token = await messaging.getToken();
-      if (token != null)
+      if (token != null) {
         socket.emit('register_token', {
           'token': token,
           'username': widget.username,
         });
-      // 🔥 ВИДАЛЕНО: SnackBar при отриманні повідомлень
-      // Повідомлення вже відображаються в реальному часі через Socket.IO
+      }
+
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        // Push-повідомлення отримано, але не показуємо SnackBar
-        // бо користувач вже бачить повідомлення в чаті
         print("📱 Push received: ${message.notification?.title}");
       });
     } catch (e) {
@@ -520,7 +502,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     socket.connect();
 
-    // 🔥 НОВИЙ КОД: Відправляємо онлайн статус при підключенні
     socket.onConnect((_) {
       print('✅ Connected to server');
       socket.emit('user_online', myName);
@@ -561,9 +542,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _isTyping = true;
           _typingUser = data['username'];
         });
-        // 🔥 НОВИЙ КОД: Прокручуємо до typing indicator
         _scrollToBottom();
-
         _typingTimer?.cancel();
         _typingTimer = Timer(const Duration(seconds: 3), () {
           if (mounted) setState(() => _isTyping = false);
@@ -577,7 +556,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // 🔥 НОВИЙ КОД: Слухаємо список онлайн користувачів
     socket.on('online_users', (data) {
       if (mounted) {
         setState(() {
@@ -618,19 +596,106 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // 🔥 НОВИЙ КОД: Reply функції
+  void _setReplyTo(Map message) {
+    setState(() {
+      _replyToMessageId = message['id'];
+      _replyToText = message['type'] == 'image' ? '📷 Фото' : message['text'];
+      _replyToSender = message['sender'];
+    });
+    // Прокручуємо до reply preview
+    _scrollToBottom();
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyToMessageId = null;
+      _replyToText = null;
+      _replyToSender = null;
+    });
+  }
+
   void sendMessage({String? imageUrl, String type = 'text'}) {
     String text = textController.text.trim();
     if (text.isEmpty && imageUrl == null) return;
-    socket.emit('send_message', {
+
+    // 🔥 ВИПРАВЛЕНО: Додаємо всі поля одразу при ініціалізації
+    final messageData = {
       'text': imageUrl ?? text,
       'sender': myName,
       'senderAvatar': widget.avatarUrl,
       'type': type,
-    });
+      // Додаємо replyTo відразу (буде null якщо немає reply)
+      if (_replyToMessageId != null)
+        'replyTo': {
+          'id': _replyToMessageId,
+          'text': _replyToText,
+          'sender': _replyToSender,
+        },
+    };
+
+    socket.emit('send_message', messageData);
     textController.clear();
+
+    // Скидаємо reply
+    _cancelReply();
   }
 
-  // 🔥 НОВИЙ КОД: Контекстне меню
+  // 🔥 НОВИЙ КОД: Reply preview widget
+  Widget _buildReplyPreview() {
+    if (_replyToMessageId == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 50,
+            decoration: BoxDecoration(
+              color: AppColors.mainColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _replyToSender ?? '',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.mainColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _replyToText ?? '',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+            onPressed: _cancelReply,
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showContextMenu(BuildContext context, Map message) {
     final isMe = message['sender'] == myName;
 
@@ -645,7 +710,6 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Заголовок
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -665,7 +729,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const Divider(color: Colors.white12, height: 1),
 
-            // Копіювати
             ListTile(
               leading: const Icon(Icons.copy, color: Colors.white70),
               title: const Text(
@@ -684,7 +747,7 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
 
-            // Відповісти (TODO)
+            // 🔥 НОВИЙ КОД: Кнопка відповісти
             ListTile(
               leading: const Icon(Icons.reply, color: Colors.white70),
               title: const Text(
@@ -693,17 +756,10 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                // TODO: Implement reply functionality
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Функція в розробці'),
-                    duration: Duration(seconds: 1),
-                  ),
-                );
+                _setReplyTo(message);
               },
             ),
 
-            // Переслати (TODO)
             ListTile(
               leading: const Icon(Icons.forward, color: Colors.white70),
               title: const Text(
@@ -712,7 +768,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                // TODO: Implement forward functionality
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Функція в розробці'),
@@ -722,7 +777,6 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
 
-            // Видалити (тільки для власних повідомлень)
             if (isMe) ...[
               const Divider(color: Colors.white12, height: 1),
               ListTile(
@@ -775,15 +829,15 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Helper methods for dates
   DateTime _parseDate(dynamic timestamp) {
     if (timestamp == null) return DateTime.now();
     try {
       if (timestamp is String) return DateTime.parse(timestamp);
-      if (timestamp is Map && timestamp['_seconds'] != null)
+      if (timestamp is Map && timestamp['_seconds'] != null) {
         return DateTime.fromMillisecondsSinceEpoch(
           timestamp['_seconds'] * 1000,
         );
+      }
     } catch (e) {}
     return DateTime.now();
   }
@@ -832,7 +886,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   "Chat",
                   style: TextStyle(fontSize: 17, color: Colors.white),
                 ),
-                // 🔥 НОВИЙ КОД: Показуємо кількість онлайн користувачів
                 Text(
                   '${_onlineUsers.length} онлайн',
                   style: TextStyle(
@@ -874,7 +927,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: Stack(
           children: [
-            // 1. СПИСОК ПОВІДОМЛЕНЬ
             Positioned.fill(
               child: ListView.builder(
                 controller: _scrollController,
@@ -886,14 +938,31 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 itemCount:
                     messages.length +
-                    (_isTyping && _typingUser != null
+                    (_isTyping && _typingUser != null ? 1 : 0) +
+                    (_replyToMessageId != null
                         ? 1
-                        : 0), // 🔥 +1 для typing indicator
+                        : 0), // 🔥 +1 для reply preview
                 itemBuilder: (context, index) {
-                  // 🔥 НОВИЙ КОД: Показуємо typing indicator як останній елемент
-                  if (index == messages.length &&
-                      _isTyping &&
-                      _typingUser != null) {
+                  // 🔥 НОВИЙ КОД: Reply Preview як останній елемент
+                  final totalMessages = messages.length;
+                  final hasTyping = _isTyping && _typingUser != null;
+                  final hasReply = _replyToMessageId != null;
+
+                  // Показуємо reply preview (якщо є)
+                  if (hasReply &&
+                      index == totalMessages + (hasTyping ? 1 : 0)) {
+                    return Padding(
+                      padding: const EdgeInsets.only(
+                        top: 8,
+                        left: 10,
+                        right: 10,
+                      ),
+                      child: _buildReplyPreview(),
+                    );
+                  }
+
+                  // Показуємо typing indicator
+                  if (hasTyping && index == totalMessages) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: TypingIndicator(username: _typingUser!),
@@ -903,7 +972,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   final msg = messages[index];
                   final isMe = msg['sender'] == myName;
 
-                  // 🔥 НОВИЙ КОД: Date separator logic
                   bool showDateSeparator = false;
                   if (index == 0) {
                     showDateSeparator = true;
@@ -918,25 +986,32 @@ class _ChatScreenState extends State<ChatScreen> {
 
                   return Column(
                     children: [
-                      // 🔥 НОВИЙ КОД: Date separator
                       if (showDateSeparator) DateSeparator(date: dateLabel),
 
-                      // 🔥 НОВИЙ КОД: Додаємо GestureDetector для контекстного меню
-                      GestureDetector(
-                        onLongPress: () => _showContextMenu(context, msg),
-                        child: AnimatedMessageBubble(
-                          isMe: isMe,
-                          child: MessageBubble(
-                            text: msg['type'] == 'image'
-                                ? ''
-                                : (msg['text'] ?? ''),
-                            imageUrl: msg['type'] == 'image'
-                                ? msg['text']
-                                : null,
-                            sender: msg['sender'] ?? 'Anon',
+                      // 🔥 SWIPE-TO-REPLY: Потягніть вправо для відповіді
+                      SwipeToReply(
+                        onReply: () => _setReplyTo(msg),
+                        replyIconColor: isMe
+                            ? Colors
+                                  .blue // Для своїх
+                            : Colors.green, // Для чужих
+                        child: GestureDetector(
+                          onLongPress: () => _showContextMenu(context, msg),
+                          child: AnimatedMessageBubble(
                             isMe: isMe,
-                            timestamp: msg['timestamp'],
-                            isRead: msg['read'] == true,
+                            child: MessageBubble(
+                              text: msg['type'] == 'image'
+                                  ? ''
+                                  : (msg['text'] ?? ''),
+                              imageUrl: msg['type'] == 'image'
+                                  ? msg['text']
+                                  : null,
+                              sender: msg['sender'] ?? 'Anon',
+                              isMe: isMe,
+                              timestamp: msg['timestamp'],
+                              isRead: msg['read'] == true,
+                              replyTo: msg['replyTo'],
+                            ),
                           ),
                         ),
                       ),
@@ -946,7 +1021,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
 
-            // 3. ПЛАВАЮЧА ПАНЕЛЬ ВВОДУ
             Positioned(
               bottom: 0,
               left: 0,
@@ -1022,7 +1096,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Допоміжний метод для круглих кнопок
   Widget _buildFloatingButton({
     required IconData icon,
     required VoidCallback onPressed,
@@ -1047,7 +1120,63 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// 🔥 BUBBLE З НОВИМИ КОЛЬОРАМИ
+// =======================
+// 🔥 НОВИЙ КОД: ReplyPreview Widget
+// =======================
+class ReplyPreview extends StatelessWidget {
+  final Map? replyTo;
+  final VoidCallback? onTap;
+
+  const ReplyPreview({super.key, this.replyTo, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    if (replyTo == null) return const SizedBox.shrink();
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(color: AppColors.mainColor, width: 3),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              replyTo!['sender'] ?? '',
+              style: TextStyle(
+                fontSize: 11,
+                color: AppColors.mainColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              replyTo!['text'] ?? '',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =======================
+// 💬 MessageBubble з Reply
+// =======================
 class MessageBubble extends StatelessWidget {
   final String text;
   final String sender;
@@ -1056,6 +1185,7 @@ class MessageBubble extends StatelessWidget {
   final dynamic timestamp;
   final String? avatarUrl;
   final bool isRead;
+  final Map? replyTo; // 🔥 НОВИЙ
 
   const MessageBubble({
     super.key,
@@ -1066,6 +1196,7 @@ class MessageBubble extends StatelessWidget {
     this.timestamp,
     this.avatarUrl,
     this.isRead = false,
+    this.replyTo, // 🔥 НОВИЙ
   });
 
   @override
@@ -1080,14 +1211,12 @@ class MessageBubble extends StatelessWidget {
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          // 🔥 ЯКЩО Я: Градієнт з AppColors
           gradient: isMe
               ? const LinearGradient(
                   colors: [AppColors.bubbleMeStart, AppColors.bubbleMeEnd],
                 )
               : null,
           color: isMe ? null : AppColors.bubbleOther.withOpacity(0.1),
-
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -1127,6 +1256,15 @@ class MessageBubble extends StatelessWidget {
                       fontSize: 12,
                     ),
                   ),
+                ),
+
+              // 🔥 НОВИЙ КОД: Показуємо reply preview
+              if (replyTo != null)
+                ReplyPreview(
+                  replyTo: replyTo,
+                  onTap: () {
+                    print('Scroll to message: ${replyTo!['id']}');
+                  },
                 ),
 
               if (imageUrl != null)
@@ -1200,5 +1338,158 @@ class MessageBubble extends StatelessWidget {
     } catch (e) {
       return '';
     }
+  }
+}
+
+// =======================
+// 🎯 SWIPE-TO-REPLY WIDGET
+// =======================
+class SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+  final Color? replyIconColor;
+
+  const SwipeToReply({
+    super.key,
+    required this.child,
+    required this.onReply,
+    this.replyIconColor,
+  });
+
+  @override
+  State<SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<SwipeToReply>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _iconScaleAnimation;
+  late Animation<double> _iconOpacityAnimation;
+
+  double _dragExtent = 0;
+  bool _dragUnderway = false;
+
+  static const double _kReplyThreshold = 80.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
+    _iconScaleAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.2,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticOut));
+
+    _iconOpacityAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleDragStart(DragStartDetails details) {
+    _dragUnderway = true;
+    _controller.stop();
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    if (!_dragUnderway) return;
+
+    final delta = details.primaryDelta!;
+
+    if (delta > 0) {
+      setState(() {
+        _dragExtent = (_dragExtent + delta).clamp(0.0, _kReplyThreshold * 1.5);
+        _controller.value = (_dragExtent / _kReplyThreshold).clamp(0.0, 1.0);
+      });
+    }
+  }
+
+  void _handleDragEnd(DragEndDetails details) {
+    if (!_dragUnderway) return;
+    _dragUnderway = false;
+
+    if (_dragExtent >= _kReplyThreshold) {
+      // Додайте вібрацію
+      Vibration.vibrate(duration: 50); // 🔥 НОВИЙ КОД
+      widget.onReply();
+    }
+
+    if (_dragExtent >= _kReplyThreshold) {
+      SystemSound.play(SystemSoundType.click); // 🔥 НОВИЙ КОД
+      widget.onReply();
+    }
+
+    if (_dragExtent >= _kReplyThreshold) {
+      widget.onReply();
+    }
+
+    setState(() {
+      _dragExtent = 0;
+    });
+    _controller.animateTo(0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragStart: _handleDragStart,
+      onHorizontalDragUpdate: _handleDragUpdate,
+      onHorizontalDragEnd: _handleDragEnd,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                return Container(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: 20),
+                  child: Opacity(
+                    opacity: _iconOpacityAnimation.value,
+                    child: Transform.scale(
+                      scale: _iconScaleAnimation.value,
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: (widget.replyIconColor ?? AppColors.mainColor)
+                              .withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.reply,
+                          color: widget.replyIconColor ?? AppColors.mainColor,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(_dragExtent, 0),
+                child: child,
+              );
+            },
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
   }
 }
