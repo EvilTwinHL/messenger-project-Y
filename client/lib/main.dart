@@ -360,6 +360,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _replyToText;
   String? _replyToSender;
 
+  // 🔥 НОВИЙ КОД: Edit змінні
+  String? _editingMessageId;
+  String? _editingOriginalText;
+  bool _isEditing = false;
+
   @override
   void initState() {
     super.initState();
@@ -576,6 +581,21 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+
+    // 🔥 НОВИЙ КОД: Слухач для відредагованих повідомлень
+    socket.on('message_edited', (data) {
+      if (mounted) {
+        setState(() {
+          final messageIndex = messages.indexWhere(
+            (msg) => msg['id'] == data['messageId'],
+          );
+          if (messageIndex != -1) {
+            messages[messageIndex]['text'] = data['newText'];
+            messages[messageIndex]['edited'] = true;
+          }
+        });
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -628,6 +648,43 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  // 🔥 НОВИЙ КОД: Функції для редагування
+  void _startEditingMessage(Map message) {
+    setState(() {
+      _editingMessageId = message['id'];
+      _editingOriginalText = message['text'];
+      _isEditing = true;
+      textController.text = message['text'];
+    });
+    // Прокручуємо вниз і фокусуємо поле
+    _scrollToBottom();
+  }
+
+  void _cancelEditing() {
+    setState(() {
+      _editingMessageId = null;
+      _editingOriginalText = null;
+      _isEditing = false;
+      textController.clear();
+    });
+  }
+
+  void _saveEditedMessage() {
+    final newText = textController.text.trim();
+    if (newText.isEmpty || newText == _editingOriginalText) {
+      _cancelEditing();
+      return;
+    }
+
+    socket.emit('edit_message', {
+      'messageId': _editingMessageId,
+      'newText': newText,
+      'username': myName,
+    });
+
+    _cancelEditing();
+  }
+
   // 🔥 НОВИЙ КОД: Функція для додавання реакції
   void _addReaction(String messageId, String emoji) {
     socket.emit('add_reaction', {
@@ -640,6 +697,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void sendMessage({String? imageUrl, String type = 'text'}) {
     String text = textController.text.trim();
     if (text.isEmpty && imageUrl == null) return;
+
+    // 🔥 НОВИЙ КОД: Якщо редагуємо - зберігаємо зміни
+    if (_isEditing) {
+      _saveEditedMessage();
+      return;
+    }
 
     // 🔥 ВИПРАВЛЕНО: Додаємо всі поля одразу при ініціалізації
     final messageData = {
@@ -712,6 +775,54 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.close, color: Colors.white54, size: 20),
             onPressed: _cancelReply,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔥 НОВИЙ КОД: Editing header widget
+  Widget _buildEditingHeader() {
+    if (!_isEditing) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppColors.mainColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.mainColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.edit, color: AppColors.mainColor, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Редагування повідомлення',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.mainColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _editingOriginalText ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+            onPressed: _cancelEditing,
           ),
         ],
       ),
@@ -813,6 +924,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
             if (isMe) ...[
               const Divider(color: Colors.white12, height: 1),
+              // 🔥 НОВИЙ КОД: Кнопка редагувати (тільки для текстових повідомлень)
+              if (message['type'] != 'image')
+                ListTile(
+                  leading: const Icon(Icons.edit, color: Colors.white70),
+                  title: const Text(
+                    'Редагувати',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _startEditingMessage(message);
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.delete_outline, color: Colors.red),
                 title: const Text(
@@ -973,14 +1097,30 @@ class _ChatScreenState extends State<ChatScreen> {
                 itemCount:
                     messages.length +
                     (_isTyping && _typingUser != null ? 1 : 0) +
-                    (_replyToMessageId != null
-                        ? 1
-                        : 0), // 🔥 +1 для reply preview
+                    (_replyToMessageId != null ? 1 : 0) + // reply preview
+                    (_isEditing ? 1 : 0), // 🔥 НОВИЙ: editing preview
                 itemBuilder: (context, index) {
-                  // 🔥 НОВИЙ КОД: Reply Preview як останній елемент
+                  // 🔥 НОВИЙ КОД: Reply/Edit Preview як останній елемент
                   final totalMessages = messages.length;
                   final hasTyping = _isTyping && _typingUser != null;
                   final hasReply = _replyToMessageId != null;
+                  final hasEditing = _isEditing;
+
+                  // Показуємо editing preview (якщо є) - останнім
+                  if (hasEditing &&
+                      index ==
+                          totalMessages +
+                              (hasTyping ? 1 : 0) +
+                              (hasReply ? 1 : 0)) {
+                    return Padding(
+                      padding: const EdgeInsets.only(
+                        top: 8,
+                        left: 10,
+                        right: 10,
+                      ),
+                      child: _buildEditingHeader(),
+                    );
+                  }
 
                   // Показуємо reply preview (якщо є)
                   if (hasReply &&
@@ -1045,10 +1185,11 @@ class _ChatScreenState extends State<ChatScreen> {
                               timestamp: msg['timestamp'],
                               isRead: msg['read'] == true,
                               replyTo: msg['replyTo'],
-                              reactions: msg['reactions'], // 🔥 НОВИЙ
-                              messageId: msg['id'], // 🔥 НОВИЙ
-                              currentUsername: myName, // 🔥 НОВИЙ
-                              onReactionTap: _addReaction, // 🔥 НОВИЙ
+                              reactions: msg['reactions'],
+                              messageId: msg['id'],
+                              currentUsername: myName,
+                              onReactionTap: _addReaction,
+                              edited: msg['edited'] == true, // 🔥 НОВИЙ
                             ),
                           ),
                         ),
@@ -1121,7 +1262,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(width: 8),
                     _buildFloatingButton(
-                      icon: Icons.arrow_upward,
+                      // 🔥 НОВИЙ КОД: Різні іконки для відправки і редагування
+                      icon: _isEditing ? Icons.check : Icons.arrow_upward,
                       onPressed: sendMessage,
                     ),
                   ],
@@ -1228,10 +1370,11 @@ class MessageBubble extends StatelessWidget {
   final String? avatarUrl;
   final bool isRead;
   final Map? replyTo;
-  final Map<String, dynamic>? reactions; // 🔥 НОВИЙ
-  final String messageId; // 🔥 НОВИЙ
-  final String currentUsername; // 🔥 НОВИЙ
-  final Function(String messageId, String emoji)? onReactionTap; // 🔥 НОВИЙ
+  final Map<String, dynamic>? reactions;
+  final String messageId;
+  final String currentUsername;
+  final Function(String messageId, String emoji)? onReactionTap;
+  final bool edited; // 🔥 НОВИЙ
 
   const MessageBubble({
     super.key,
@@ -1243,10 +1386,11 @@ class MessageBubble extends StatelessWidget {
     this.avatarUrl,
     this.isRead = false,
     this.replyTo,
-    this.reactions, // 🔥 НОВИЙ
-    required this.messageId, // 🔥 НОВИЙ
-    required this.currentUsername, // 🔥 НОВИЙ
-    this.onReactionTap, // 🔥 НОВИЙ
+    this.reactions,
+    required this.messageId,
+    required this.currentUsername,
+    this.onReactionTap,
+    this.edited = false, // 🔥 НОВИЙ
   });
 
   @override
@@ -1341,6 +1485,18 @@ class MessageBubble extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
+                      // 🔥 НОВИЙ КОД: Показуємо "edited" якщо повідомлення відредаговано
+                      if (edited) ...[
+                        Text(
+                          'edited.',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white.withOpacity(0.4),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
                       Text(
                         timeText,
                         style: TextStyle(
