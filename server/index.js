@@ -292,7 +292,8 @@ io.on('connection', async (socket) => {
         
         await messageRef.update({ reactions: currentReactions });
         
-        io.to(messageData.roomId || 'general').emit('reaction_updated', {
+        // 🔥 ВИПРАВЛЕНО: Відправляємо ВСІМ (не в кімнату)
+        io.emit('reaction_updated', {
             messageId,
             reactions: currentReactions
         });

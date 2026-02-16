@@ -562,6 +562,20 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+
+    // 🔥 НОВИЙ КОД: Слухаємо оновлення реакцій
+    socket.on('reaction_updated', (data) {
+      if (mounted) {
+        setState(() {
+          final messageIndex = messages.indexWhere(
+            (msg) => msg['id'] == data['messageId'],
+          );
+          if (messageIndex != -1) {
+            messages[messageIndex]['reactions'] = data['reactions'];
+          }
+        });
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -611,6 +625,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _replyToMessageId = null;
       _replyToText = null;
       _replyToSender = null;
+    });
+  }
+
+  // 🔥 НОВИЙ КОД: Функція для додавання реакції
+  void _addReaction(String messageId, String emoji) {
+    socket.emit('add_reaction', {
+      'messageId': messageId,
+      'emoji': emoji,
+      'username': myName,
     });
   }
 
@@ -709,6 +732,18 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // 🔥 НОВИЙ КОД: Панель реакцій зверху
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: ReactionPicker(
+                onReactionSelected: (emoji) {
+                  _addReaction(message['id'], emoji);
+                  Navigator.pop(ctx);
+                },
+              ),
+            ),
+            const Divider(color: Colors.white12, height: 1),
+
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -1010,6 +1045,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               timestamp: msg['timestamp'],
                               isRead: msg['read'] == true,
                               replyTo: msg['replyTo'],
+                              reactions: msg['reactions'], // 🔥 НОВИЙ
+                              messageId: msg['id'], // 🔥 НОВИЙ
+                              currentUsername: myName, // 🔥 НОВИЙ
+                              onReactionTap: _addReaction, // 🔥 НОВИЙ
                             ),
                           ),
                         ),
@@ -1103,13 +1142,7 @@ class _ChatScreenState extends State<ChatScreen> {
       decoration: BoxDecoration(
         color: AppColors.mainColor,
         shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.mainColor.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        // 🔥 ВИДАЛЕНО boxShadow
       ),
       child: IconButton(
         icon: Icon(icon, color: Colors.white),
@@ -1194,7 +1227,11 @@ class MessageBubble extends StatelessWidget {
   final dynamic timestamp;
   final String? avatarUrl;
   final bool isRead;
-  final Map? replyTo; // 🔥 НОВИЙ
+  final Map? replyTo;
+  final Map<String, dynamic>? reactions; // 🔥 НОВИЙ
+  final String messageId; // 🔥 НОВИЙ
+  final String currentUsername; // 🔥 НОВИЙ
+  final Function(String messageId, String emoji)? onReactionTap; // 🔥 НОВИЙ
 
   const MessageBubble({
     super.key,
@@ -1205,126 +1242,145 @@ class MessageBubble extends StatelessWidget {
     this.timestamp,
     this.avatarUrl,
     this.isRead = false,
-    this.replyTo, // 🔥 НОВИЙ
+    this.replyTo,
+    this.reactions, // 🔥 НОВИЙ
+    required this.messageId, // 🔥 НОВИЙ
+    required this.currentUsername, // 🔥 НОВИЙ
+    this.onReactionTap, // 🔥 НОВИЙ
   });
 
   @override
   Widget build(BuildContext context) {
     final timeText = _formatTime(timestamp);
 
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          gradient: isMe
-              ? const LinearGradient(
-                  colors: [AppColors.bubbleMeStart, AppColors.bubbleMeEnd],
-                )
-              : null,
-          color: isMe ? null : AppColors.bubbleOther.withOpacity(0.1),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(18),
-            topRight: const Radius.circular(18),
-            bottomLeft: isMe
-                ? const Radius.circular(18)
-                : const Radius.circular(4),
-            bottomRight: isMe
-                ? const Radius.circular(4)
-                : const Radius.circular(18),
-          ),
-          border: isMe
-              ? null
-              : Border.all(color: Colors.white.withOpacity(0.1)),
-          boxShadow: isMe
-              ? [
-                  BoxShadow(
-                    color: AppColors.mainColor.withOpacity(0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!isMe)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    sender,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.mainColor.withOpacity(0.9),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-
-              // 🔥 НОВИЙ КОД: Показуємо reply preview
-              if (replyTo != null)
-                ReplyPreview(
-                  replyTo: replyTo,
-                  isMe: isMe, // 🔥 ПЕРЕДАЄМО isMe
-                  onTap: () {
-                    print('Scroll to message: ${replyTo!['id']}');
-                  },
-                ),
-
-              if (imageUrl != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(imageUrl!, fit: BoxFit.cover),
-                  ),
-                ),
-
-              if (text.isNotEmpty)
-                Text(
-                  text,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: Colors.white,
-                    height: 1.3,
-                  ),
-                ),
-
-              const SizedBox(height: 4),
-
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
+    return Column(
+      crossAxisAlignment: isMe
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        // Саме повідомлення
+        Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.75,
+            ),
+            decoration: BoxDecoration(
+              gradient: isMe
+                  ? const LinearGradient(
+                      colors: [AppColors.bubbleMeStart, AppColors.bubbleMeEnd],
+                    )
+                  : null,
+              color: isMe ? null : AppColors.bubbleOther.withOpacity(0.1),
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: isMe
+                    ? const Radius.circular(18)
+                    : const Radius.circular(4),
+                bottomRight: isMe
+                    ? const Radius.circular(4)
+                    : const Radius.circular(18),
+              ),
+              border: isMe
+                  ? null
+                  : Border.all(color: Colors.white.withOpacity(0.1)),
+              // 🔥 ВИДАЛЕНО boxShadow
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    timeText,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.white.withOpacity(0.6),
+                  if (!isMe)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        sender,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.mainColor.withOpacity(0.9),
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
+
+                  // 🔥 НОВИЙ КОД: Показуємо reply preview
+                  if (replyTo != null)
+                    ReplyPreview(
+                      replyTo: replyTo,
+                      isMe: isMe, // 🔥 ПЕРЕДАЄМО isMe
+                      onTap: () {
+                        print('Scroll to message: ${replyTo!['id']}');
+                      },
+                    ),
+
+                  if (imageUrl != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(imageUrl!, fit: BoxFit.cover),
+                      ),
+                    ),
+
+                  if (text.isNotEmpty)
+                    Text(
+                      text,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: Colors.white,
+                        height: 1.3,
+                      ),
+                    ),
+
+                  const SizedBox(height: 4),
+
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        timeText,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withOpacity(0.6),
+                        ),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 5),
+                        Icon(
+                          isRead ? Icons.done_all : Icons.check,
+                          size: 14,
+                          color: isRead
+                              ? Colors.white
+                              : Colors.white.withOpacity(0.6),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (isMe) ...[
-                    const SizedBox(width: 5),
-                    Icon(
-                      isRead ? Icons.done_all : Icons.check,
-                      size: 14,
-                      color: isRead
-                          ? Colors.white
-                          : Colors.white.withOpacity(0.6),
-                    ),
-                  ],
                 ],
               ),
-            ],
+            ),
           ),
         ),
-      ),
+
+        // 🔥 НОВИЙ КОД: Реакції під повідомленням
+        if (reactions != null && reactions!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, right: 12, top: 4),
+            child: ReactionsDisplay(
+              reactions: reactions,
+              currentUsername: currentUsername,
+              onReactionTap: (emoji) {
+                if (onReactionTap != null) {
+                  onReactionTap!(messageId, emoji);
+                }
+              },
+            ),
+          ),
+      ],
     );
   }
 
@@ -1348,6 +1404,127 @@ class MessageBubble extends StatelessWidget {
     } catch (e) {
       return '';
     }
+  }
+}
+
+// =======================
+// ❤️ REACTION PICKER WIDGET
+// =======================
+class ReactionPicker extends StatelessWidget {
+  final Function(String) onReactionSelected;
+
+  const ReactionPicker({super.key, required this.onReactionSelected});
+
+  static const reactions = ['❤️', '👍', '😂', '😮', '😢', '🙏', '🔥', '👏'];
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 300),
+      tween: Tween(begin: 0.0, end: 1.0),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) {
+        return Transform.scale(scale: value, child: child);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.8),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: reactions.map((emoji) {
+            return GestureDetector(
+              onTap: () => onReactionSelected(emoji),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4), // 🔥 6 → 4
+                child: Text(
+                  emoji,
+                  style: const TextStyle(fontSize: 24), // 🔥 28 → 24
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+
+// =======================
+// 💬 REACTIONS DISPLAY WIDGET
+// =======================
+class ReactionsDisplay extends StatelessWidget {
+  final Map<String, dynamic>? reactions;
+  final String currentUsername;
+  final Function(String) onReactionTap;
+
+  const ReactionsDisplay({
+    super.key,
+    this.reactions,
+    required this.currentUsername,
+    required this.onReactionTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (reactions == null || reactions!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 6, // 🔥 4 → 6 для більшого простору
+        runSpacing: 6,
+        children: reactions!.entries.map((entry) {
+          final emoji = entry.key;
+          final users = List<String>.from(entry.value);
+          final hasMyReaction = users.contains(currentUsername);
+
+          return GestureDetector(
+            onTap: () => onReactionTap(emoji),
+            child: Container(
+              // 🔥 НОВИЙ ДИЗАЙН: круглий контейнер як в Signal
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                // Темний фон, трохи світліший якщо своя реакція
+                color: hasMyReaction
+                    ? Colors.grey[800]?.withOpacity(0.9) // Світліший для своїх
+                    : Colors.grey[900]?.withOpacity(0.8), // Темніший для чужих
+                borderRadius: BorderRadius.circular(
+                  20,
+                ), // Більший radius для круглості
+                // 🔥 БЕЗ border як в Signal
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    emoji,
+                    style: const TextStyle(fontSize: 18), // 🔥 16 → 18
+                  ),
+                  if (users.length > 1) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      '${users.length}',
+                      style: const TextStyle(
+                        fontSize: 13, // 🔥 12 → 13
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
   }
 }
 
