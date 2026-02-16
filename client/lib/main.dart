@@ -346,7 +346,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final _updater = ShorebirdUpdater();
   bool _isUpdateAvailable = false;
-  int? _currentPatch;
+  // int? _currentPatch; // 🔥 ВИДАЛЕНО: не використовується
 
   late String myName;
   bool _isTyping = false;
@@ -374,10 +374,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _checkShorebirdSilent() async {
     try {
       if (!_updater.isAvailable) return;
-      final patch = await _updater.readCurrentPatch();
+      // final patch = await _updater.readCurrentPatch(); // 🔥 ВИДАЛЕНО
       final status = await _updater.checkForUpdate();
       setState(() {
-        _currentPatch = patch?.number;
         _isUpdateAvailable = status == UpdateStatus.outdated;
       });
     } catch (e) {
@@ -672,9 +671,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   _replyToSender ?? '',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     color: AppColors.mainColor,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.bold, //FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1126,8 +1125,14 @@ class _ChatScreenState extends State<ChatScreen> {
 class ReplyPreview extends StatelessWidget {
   final Map? replyTo;
   final VoidCallback? onTap;
+  final bool isMe; // 🔥 НОВИЙ: для вибору кольору лінії
 
-  const ReplyPreview({super.key, this.replyTo, this.onTap});
+  const ReplyPreview({
+    super.key,
+    this.replyTo,
+    this.onTap,
+    this.isMe = false, // 🔥 НОВИЙ
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1142,7 +1147,11 @@ class ReplyPreview extends StatelessWidget {
           color: Colors.black.withOpacity(0.2),
           borderRadius: BorderRadius.circular(8),
           border: Border(
-            left: BorderSide(color: AppColors.mainColor, width: 3),
+            // 🔥 ЗМІНЕНО: біла лінія для своїх, синя для чужих (як в Signal)
+            left: BorderSide(
+              color: isMe ? Colors.white : AppColors.mainColor,
+              width: 3,
+            ),
           ),
         ),
         child: Column(
@@ -1152,9 +1161,9 @@ class ReplyPreview extends StatelessWidget {
             Text(
               replyTo!['sender'] ?? '',
               style: TextStyle(
-                fontSize: 11,
-                color: AppColors.mainColor,
-                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: AppColors.white, //mainColor,
+                fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 2),
@@ -1262,6 +1271,7 @@ class MessageBubble extends StatelessWidget {
               if (replyTo != null)
                 ReplyPreview(
                   replyTo: replyTo,
+                  isMe: isMe, // 🔥 ПЕРЕДАЄМО isMe
                   onTap: () {
                     print('Scroll to message: ${replyTo!['id']}');
                   },
