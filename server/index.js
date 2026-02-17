@@ -2,393 +2,587 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 var admin = require("firebase-admin");
 var serviceAccount = require("./serviceAccountKey.json");
 
-// --- НАЛАШТУВАННЯ ---
-const BUCKET_NAME = "project-y-8df27.firebasestorage.app"; 
-// --------------------
+const BUCKET_NAME = "project-y-8df27.firebasestorage.app";
 
-// Ініціалізація з Bucket
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  storageBucket: BUCKET_NAME 
+  storageBucket: BUCKET_NAME
 });
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket(); // Підключаємось до сховища
+const bucket = admin.storage().bucket();
 
 const app = express();
 app.use(cors());
-app.use(express.json()); // 🔥 ВАЖЛИВО: Додано для обробки JSON при авторизації
+app.use(express.json());
 
-// Налаштування Multer (тимчасове зберігання файлу перед відправкою в хмару)
 const multer = require('multer');
 const fs = require('fs');
-const upload = multer({ dest: 'uploads/' }); // Тимчасова папка
+const upload = multer({ dest: 'uploads/' });
 
-// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД + АВАТАРКА) ---
-app.post('/auth', async (req, res) => {
-    const { username, avatarUrl } = req.body;
+// ============================================================
+// 🔐 AUTH — РЕЄСТРАЦІЯ / ВХІД
+// ============================================================
 
-    if (!username || username.trim().length === 0) {
-        return res.status(400).json({ error: "Ім'я не може бути пустим" });
-    }
+// Реєстрація
+app.post('/auth/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Потрібні username та password' });
+    if (username.trim().length < 3) return res.status(400).json({ error: 'Мінімум 3 символи' });
+    if (password.length < 6) return res.status(400).json({ error: 'Пароль мінімум 6 символів' });
 
     try {
         const usersRef = db.collection('users');
-        const snapshot = await usersRef.where('username', '==', username).get();
+        const existing = await usersRef.where('username', '==', username.trim().toLowerCase()).get();
+        if (!existing.empty) return res.status(409).json({ error: 'Нікнейм вже зайнятий' });
 
-        if (snapshot.empty) {
-            // Створюємо нового користувача
-            const newUser = {
-                username: username,
-                avatarUrl: avatarUrl || null,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            };
-            await usersRef.add(newUser);
-            return res.json({ status: 'created', user: newUser });
-        } else {
-            // Існуючий користувач
-            const docId = snapshot.docs[0].id;
-            if (avatarUrl) {
-                await usersRef.doc(docId).update({ avatarUrl: avatarUrl });
-            }
-            
-            const userData = snapshot.docs[0].data();
-            userData.avatarUrl = avatarUrl || userData.avatarUrl;
-            
-            return res.json({ status: 'found', user: userData });
-        }
-    } catch (error) {
-        console.error("Auth Error:", error);
-        res.status(500).json({ error: "Помилка сервера при вході" });
+        const passwordHash = await bcrypt.hash(password, 10);
+        const token = crypto.randomBytes(32).toString('hex');
+
+        const userData = {
+            username: username.trim().toLowerCase(),
+            displayName: username.trim(),
+            passwordHash,
+            token,
+            avatarUrl: null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+            online: false,
+        };
+
+        const docRef = await usersRef.add(userData);
+        const { passwordHash: _, ...safeData } = userData;
+
+        res.json({ status: 'created', user: { id: docRef.id, ...safeData }, token });
+    } catch (e) {
+        console.error('Register error:', e);
+        res.status(500).json({ error: 'Помилка сервера' });
     }
 });
 
-// --- ЗАВАНТАЖЕННЯ ФОТО ---
+// Вхід
+app.post('/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Потрібні username та password' });
+
+    try {
+        const snapshot = await db.collection('users')
+            .where('username', '==', username.trim().toLowerCase()).get();
+
+        if (snapshot.empty) return res.status(401).json({ error: 'Користувача не знайдено' });
+
+        const doc = snapshot.docs[0];
+        const userData = doc.data();
+
+        const valid = await bcrypt.compare(password, userData.passwordHash);
+        if (!valid) return res.status(401).json({ error: 'Невірний пароль' });
+
+        // Оновлюємо токен при кожному вході
+        const token = crypto.randomBytes(32).toString('hex');
+        await doc.ref.update({ token, lastSeen: admin.firestore.FieldValue.serverTimestamp() });
+
+        const { passwordHash, ...safeData } = userData;
+        res.json({ status: 'ok', user: { id: doc.id, ...safeData }, token });
+    } catch (e) {
+        console.error('Login error:', e);
+        res.status(500).json({ error: 'Помилка сервера' });
+    }
+});
+
+// Оновити аватарку
+app.post('/auth/update-avatar', upload.single('image'), async (req, res) => {
+    const { userId, token } = req.body;
+    if (!userId || !token || !req.file) return res.status(400).send('Missing data');
+
+    try {
+        const userRef = db.collection('users').doc(userId);
+        const userDoc = await userRef.get();
+        if (!userDoc.exists || userDoc.data().token !== token) return res.status(401).send('Unauthorized');
+
+        const localPath = req.file.path;
+        const remoteFileName = `avatars/${userId}_${Date.now()}.jpg`;
+        await bucket.upload(localPath, { destination: remoteFileName, metadata: { contentType: 'image/jpeg' } });
+        const [url] = await bucket.file(remoteFileName).getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        fs.unlinkSync(localPath);
+
+        await userRef.update({ avatarUrl: url });
+        res.json({ avatarUrl: url });
+    } catch (e) {
+        console.error('Avatar error:', e);
+        res.status(500).send('Error');
+    }
+});
+
+// 🔍 Пошук користувачів
+app.get('/users/search', async (req, res) => {
+    const { q, token, excludeUserId } = req.query;
+    if (!q || q.trim().length < 2) return res.json([]);
+
+    try {
+        const snapshot = await db.collection('users')
+            .orderBy('username')
+            .startAt(q.toLowerCase())
+            .endAt(q.toLowerCase() + '\uf8ff')
+            .limit(20)
+            .get();
+
+        const users = snapshot.docs
+            .filter(doc => doc.id !== excludeUserId)
+            .map(doc => {
+                const { passwordHash, token: t, ...safe } = doc.data();
+                return { id: doc.id, ...safe };
+            });
+
+        res.json(users);
+    } catch (e) {
+        console.error('Search error:', e);
+        res.json([]);
+    }
+});
+
+// Отримати профіль по id
+app.get('/users/:id', async (req, res) => {
+    try {
+        const doc = await db.collection('users').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ error: 'Not found' });
+        const { passwordHash, token, ...safe } = doc.data();
+        res.json({ id: doc.id, ...safe });
+    } catch (e) {
+        res.status(500).json({ error: 'Error' });
+    }
+});
+
+// ============================================================
+// 💬 ЧАТИ — DM і Групи
+// ============================================================
+
+// Список чатів користувача
+app.get('/chats', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    try {
+        const snapshot = await db.collection('chats')
+            .where('members', 'array-contains', userId)
+            .orderBy('lastMessageAt', 'desc')
+            .limit(50)
+            .get();
+
+        const chats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.json(chats);
+    } catch (e) {
+        console.error('Get chats error:', e);
+        res.json([]);
+    }
+});
+
+// Створити або отримати DM чат
+app.post('/chats/dm', async (req, res) => {
+    const { userId, targetUserId } = req.body;
+    if (!userId || !targetUserId) return res.status(400).json({ error: 'Missing ids' });
+
+    try {
+        // DM ID — завжди сортований: менший id + більший id
+        const members = [userId, targetUserId].sort();
+        const dmId = `dm_${members[0]}_${members[1]}`;
+
+        const chatRef = db.collection('chats').doc(dmId);
+        const chatDoc = await chatRef.get();
+
+        if (!chatDoc.exists) {
+            // Отримуємо інфо обох користувачів
+            const [u1doc, u2doc] = await Promise.all([
+                db.collection('users').doc(userId).get(),
+                db.collection('users').doc(targetUserId).get(),
+            ]);
+
+            const u1 = u1doc.data() || {};
+            const u2 = u2doc.data() || {};
+
+            await chatRef.set({
+                type: 'dm',
+                members: [userId, targetUserId],
+                memberInfo: {
+                    [userId]: { displayName: u1.displayName, avatarUrl: u1.avatarUrl || null },
+                    [targetUserId]: { displayName: u2.displayName, avatarUrl: u2.avatarUrl || null },
+                },
+                lastMessage: null,
+                lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+
+        res.json({ chatId: dmId });
+    } catch (e) {
+        console.error('DM error:', e);
+        res.status(500).json({ error: 'Помилка' });
+    }
+});
+
+// Створити групу
+app.post('/chats/group', async (req, res) => {
+    const { creatorId, name, emoji, memberIds } = req.body;
+    if (!creatorId || !name || !memberIds?.length) return res.status(400).json({ error: 'Missing data' });
+
+    try {
+        const allMembers = [...new Set([creatorId, ...memberIds])];
+
+        // Отримуємо інфо всіх учасників
+        const userDocs = await Promise.all(allMembers.map(id => db.collection('users').doc(id).get()));
+        const memberInfo = {};
+        userDocs.forEach(doc => {
+            if (doc.exists) {
+                const d = doc.data();
+                memberInfo[doc.id] = { displayName: d.displayName, avatarUrl: d.avatarUrl || null };
+            }
+        });
+
+        const chatData = {
+            type: 'group',
+            name: name.trim(),
+            emoji: emoji || '👥',
+            members: allMembers,
+            admins: [creatorId],
+            memberInfo,
+            lastMessage: null,
+            lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: creatorId,
+        };
+
+        const docRef = await db.collection('chats').add(chatData);
+        res.json({ chatId: docRef.id, ...chatData });
+    } catch (e) {
+        console.error('Group error:', e);
+        res.status(500).json({ error: 'Помилка' });
+    }
+});
+
+// ============================================================
+// 📤 UPLOADS
+// ============================================================
+
 app.post('/upload', upload.single('image'), async (req, res) => {
     if (!req.file) return res.status(400).send('No file');
-
     try {
-        const localFilePath = req.file.path;
-        // Очищаємо ім'я файлу
-        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
-        const remoteFileName = `images/${Date.now()}_${safeName}`;
-
-        // 1. Завантажуємо в Firebase Storage
-        await bucket.upload(localFilePath, {
-            destination: remoteFileName,
-            metadata: {
-                contentType: req.file.mimetype, 
-            }
-        });
-
-        // 2. Отримуємо публічне посилання
-        const file = bucket.file(remoteFileName);
-        const [url] = await file.getSignedUrl({
-            action: 'read',
-            expires: '03-01-2500' 
-        });
-
-        // 3. Видаляємо тимчасовий файл
-        fs.unlinkSync(localFilePath);
-
-        res.json({ url: url });
-
-    } catch (error) {
-        console.error("Помилка завантаження:", error);
-        res.status(500).send("Upload failed");
-    }
+        const localPath = req.file.path;
+        const remoteFileName = `images/${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+        await bucket.upload(localPath, { destination: remoteFileName, metadata: { contentType: req.file.mimetype } });
+        const [url] = await bucket.file(remoteFileName).getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        fs.unlinkSync(localPath);
+        res.json({ url });
+    } catch (e) { res.status(500).send('Upload failed'); }
 });
 
-// --- 🎤 ЗАВАНТАЖЕННЯ АУДІО (ГОЛОСОВІ ПОВІДОМЛЕННЯ) ---
 app.post('/upload-audio', upload.single('audio'), async (req, res) => {
-    if (!req.file) return res.status(400).send('No audio file');
-
+    if (!req.file) return res.status(400).send('No file');
     try {
-        const localFilePath = req.file.path;
-        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
-        const remoteFileName = `audio/${Date.now()}_${safeName}`;
-
-        // 1. Завантажуємо в Firebase Storage
-        await bucket.upload(localFilePath, {
-            destination: remoteFileName,
-            metadata: {
-                contentType: req.file.mimetype || 'audio/aac',
-            }
-        });
-
-        // 2. Отримуємо публічне посилання
-        const file = bucket.file(remoteFileName);
-        const [url] = await file.getSignedUrl({
-            action: 'read',
-            expires: '03-01-2500'
-        });
-
-        // 3. Видаляємо тимчасовий файл
-        fs.unlinkSync(localFilePath);
-
-        res.json({ url: url });
-
-    } catch (error) {
-        console.error("Помилка завантаження аудіо:", error);
-        res.status(500).send("Audio upload failed");
-    }
+        const localPath = req.file.path;
+        const remoteFileName = `audio/${Date.now()}.aac`;
+        await bucket.upload(localPath, { destination: remoteFileName, metadata: { contentType: req.file.mimetype || 'audio/aac' } });
+        const [url] = await bucket.file(remoteFileName).getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        fs.unlinkSync(localPath);
+        res.json({ url });
+    } catch (e) { res.status(500).send('Audio upload failed'); }
 });
+
+app.post('/upload-file', upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).send('No file');
+    try {
+        const localPath = req.file.path;
+        const originalName = req.file.originalname || 'file';
+        const remoteFileName = `files/${Date.now()}_${originalName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        await bucket.upload(localPath, { destination: remoteFileName, metadata: { contentType: req.file.mimetype } });
+        const [url] = await bucket.file(remoteFileName).getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        fs.unlinkSync(localPath);
+        res.json({ url, fileName: originalName, fileSize: req.file.size, mimeType: req.file.mimetype });
+    } catch (e) { res.status(500).send('File upload failed'); }
+});
+
+// ============================================================
+// SOCKET.IO
+// ============================================================
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" },
-
-    maxHttpBufferSize: 6e7 // 10 MB (збільшує ліміт передачі даних)
-});
-
+const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 6e7 });
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('Server Running (With Push Filtering) 🚀');
-});
+app.get('/', (req, res) => res.send('Messenger Private v4 🔐'));
+app.get('/ping', (req, res) => res.send('pong'));
 
-app.get('/ping', (req, res) => {
-    console.log('pinged');
-    res.send('pong');
-});
+// socketId → { userId, username, avatarUrl, chatId }
+const onlineUsers = new Map();
 
-io.on('connection', async (socket) => {
-    console.log(`[CONN] Користувач підключився: ${socket.id}`);
-
-    // 🔥 Логи з телефону
-    socket.on('debug_log', (msg) => {
-        console.log(`📱 CLIENT LOG [${socket.id}]:`, msg);
-    });
-
-    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА ---
-    socket.on('register_token', async (data) => {
-        let token = "";
-        let username = null;
-
-        if (typeof data === 'string') {
-            token = data;
-        } else if (typeof data === 'object' && data.token) {
-            token = data.token;
-            username = data.username;
-        }
-
-        if(token) {
-            console.log(`💾 Збереження токена для ${username || 'Unknown'}: ${token.substring(0, 10)}...`);
-            try {
-                await db.collection('fcm_tokens').doc(token).set({
-                    username: username,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                console.log(`✅ Токен успішно записано в БД`);
-            } catch (e) {
-                console.error("❌ Помилка запису токена:", e);
-            }
-        }
-    });
-
-    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ (ОНОВЛЕНО ДЛЯ ID) ---
+// Завантажити повідомлення чату
+async function loadChatHistory(chatId, socket) {
     try {
-        const messagesRef = db.collection('messages');
-        
-        // 1. Беремо 50 НАЙНОВІШИХ повідомлень
-        const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(100).get();
-        
-        // 🔥 ЗМІНА: Тепер ми додаємо ID документа до об'єкта повідомлення
-        let history = snapshot.docs.map(doc => {
-            return {
-                id: doc.id, // <--- ВАЖЛИВО: додаємо ID, щоб потім можна було видалити
-                ...doc.data()
-            };
-        });
-
-        // 3. Розвертаємо масив
-        history = history.reverse();
-
+        const snapshot = await db.collection('chats').doc(chatId)
+            .collection('messages')
+            .orderBy('timestamp', 'desc')
+            .limit(100)
+            .get();
+        const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).reverse();
         socket.emit('load_history', history);
-    } catch (error) {
-        console.error("Помилка історії:", error);
+    } catch (e) {
+        console.error('History error:', e);
+        socket.emit('load_history', []);
+    }
+}
+
+io.on('connection', (socket) => {
+    console.log(`[CONN] ${socket.id}`);
+
+    // --- АВТОРИЗАЦІЯ SOCKET ---
+    socket.on('authenticate', async ({ userId, token, chatId }) => {
+        try {
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (!userDoc.exists || userDoc.data().token !== token) {
+                socket.emit('auth_error', 'Invalid token');
+                return;
+            }
+            const userData = userDoc.data();
+
+            // Зберігаємо стан
+            onlineUsers.set(socket.id, {
+                userId, token,
+                username: userData.displayName,
+                avatarUrl: userData.avatarUrl,
+                chatId: chatId || null,
+            });
+
+            // Оновлюємо статус online
+            await userDoc.ref.update({ online: true, lastSeen: admin.firestore.FieldValue.serverTimestamp() });
+
+            socket.emit('authenticated', { ok: true });
+
+            // Якщо є chatId — одразу підключаємо
+            if (chatId) {
+                await _joinChat(socket, userId, chatId);
+            }
+        } catch (e) {
+            console.error('Auth socket error:', e);
+        }
+    });
+
+    // --- ПРИЄДНАТИСЬ ДО ЧАТУ ---
+    socket.on('join_chat', async ({ chatId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+
+        // Покинути попередній чат
+        if (user.chatId) socket.leave(user.chatId);
+
+        await _joinChat(socket, user.userId, chatId);
+        user.chatId = chatId;
+    });
+
+    async function _joinChat(socket, userId, chatId) {
+        // Перевіряємо чи є user учасником
+        const chatDoc = await db.collection('chats').doc(chatId).get();
+        if (!chatDoc.exists) { socket.emit('error', 'Chat not found'); return; }
+        if (!chatDoc.data().members.includes(userId)) { socket.emit('error', 'Not a member'); return; }
+
+        socket.join(chatId);
+
+        // Онлайн учасники
+        const onlineInChat = getOnlineInChat(chatId);
+        io.to(chatId).emit('online_users', onlineInChat);
+
+        // Завантажуємо историю
+        await loadChatHistory(chatId, socket);
     }
 
-    // --- 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ (ОНОВЛЕНО ДЛЯ ID) ---
+    // --- НАДІСЛАТИ ПОВІДОМЛЕННЯ ---
     socket.on('send_message', async (data) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+
+        const chatId = data.chatId || user.chatId;
+        if (!chatId) return;
+
         const messageData = {
             text: data.text || '',
-            sender: data.sender,
-            senderAvatar: data.senderAvatar || null,
+            senderId: user.userId,
+            sender: user.username,
+            senderAvatar: user.avatarUrl || null,
             type: data.type || 'text',
-            imageUrl: data.imageUrl || null,
             replyTo: data.replyTo || null,
-            audioUrl: data.audioUrl || null, // 🔥 НОВИЙ: для голосових
-            audioDuration: data.audioDuration || null, // 🔥 НОВИЙ: тривалість
+            audioUrl: data.audioUrl || null,
+            audioDuration: data.audioDuration || null,
+            fileUrl: data.fileUrl || null,
+            fileName: data.fileName || null,
+            fileSize: data.fileSize || null,
+            fileMime: data.fileMime || null,
+            latitude: data.latitude || null,
+            longitude: data.longitude || null,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            read: false
+            readBy: [user.userId],
         };
 
-        // А) 🔥 ЗМІНА: Зберігаємо і отримуємо посилання (docRef), щоб знати ID
-        const docRef = await db.collection('messages').add(messageData);
-        
-        // Створюємо об'єкт для відправки клієнтам з реальним ID
-        const savedMessage = {
-            id: docRef.id, // <--- ID з бази
-            ...data,       // Дані від клієнта
-            read: false,   // 🔥
-            timestamp: new Date().toISOString() // Тимчасовий час для відображення одразу
-        };
-        
-        // Б) Відправляємо всім, хто онлайн (вже з ID!)
-        io.emit('receive_message', savedMessage); 
+        const chatRef = db.collection('chats').doc(chatId);
+        const docRef = await chatRef.collection('messages').add(messageData);
 
-        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ
-        try {
-            const tokensSnapshot = await db.collection('fcm_tokens').get();
-            
-            const tokens = tokensSnapshot.docs
-                .filter(doc => {
-                    const tokenData = doc.data();
-                    return tokenData.username !== data.sender;
-                })
-                .map(doc => doc.id);
+        // Оновлюємо lastMessage в чаті
+        let preview = data.text;
+        if (data.type === 'image') preview = '📷 Фото';
+        else if (data.type === 'voice') preview = '🎤 Голосове';
+        else if (data.type === 'file') preview = `📎 ${data.fileName || 'Файл'}`;
+        else if (data.type === 'location') preview = '📍 Локація';
 
-            if (tokens.length > 0) {
-                const payload = {
-                    notification: {
-                        title: `Нове від ${data.sender}`,
-                        body: data.type === 'image' ? '📷 Фото' : data.text,
-                    },
-                    tokens: tokens,
-                };
-                
-                const response = await admin.messaging().sendEachForMulticast(payload);
-                console.log(`🔔 Пуш розіслано: ${response.successCount}`);
-            }
-        } catch (error) {
-            console.error("Помилка розсилки пушів:", error);
-        }
-    });
-
-    // --- 4. ІНДИКАТОР НАБОРУ ---
-    socket.on('typing', (data) => {
-        socket.broadcast.emit('display_typing', data);
-    });
-
-    // --- 5. 🔥 ВИДАЛЕННЯ ПОВІДОМЛЕННЯ ---
-    socket.on('delete_message', async (messageId) => {
-        console.log(`🗑️ Запит на видалення повідомлення: ${messageId}`);
-        try {
-            // 1. Видаляємо з Firebase
-            await db.collection('messages').doc(messageId).delete();
-            
-            // 2. Кажемо всім клієнтам видалити це повідомлення з екрану
-            io.emit('message_deleted', messageId);
-        } catch (e) {
-            console.error("Помилка видалення:", e);
-        }
-    });
-
-    // --- 6. 🔥 СТАТУС ПРОЧИТАНО ---
-    socket.on('mark_read', async (data) => {
-        // data = { messageId: "...", reader: "UserB" }
-        // Або можна просто відправляти сигнал "всі повідомлення прочитані цим користувачем"
-        
-        console.log(`👀 Хтось прочитав повідомлення`);
-        
-        // Тут можна оновити конкретне повідомлення в БД, 
-        // але для простоти поки просто скажемо всім: "Оновити статус"
-        io.emit('message_read_update', data); 
-    });
- 
-
-    // --- 7. Додаємо реакції (НОВЕ) ---
-    socket.on('add_reaction', async ({ messageId, emoji, username }) => {
-    try {
-         const messageRef = db.collection('messages').doc(messageId);
-         const messageDoc = await messageRef.get();
-        
-          if (!messageDoc.exists) return;
-        
-         const messageData = messageDoc.data();
-         const currentReactions = messageData.reactions || {};
-        
-          if (!currentReactions[emoji]) {
-            currentReactions[emoji] = [];
-        }
-        
-        const userIndex = currentReactions[emoji].indexOf(username);
-         if (userIndex === -1) {
-            // Додаємо реакцію
-            currentReactions[emoji].push(username);
-         } else {
-            // Видаляємо (toggle)
-            currentReactions[emoji].splice(userIndex, 1);
-            if (currentReactions[emoji].length === 0) {
-                delete currentReactions[emoji];
-            }
-        }
-        
-        await messageRef.update({ reactions: currentReactions });
-        
-        // 🔥 ВИПРАВЛЕНО: Відправляємо ВСІМ (не в кімнату)
-        io.emit('reaction_updated', {
-            messageId,
-            reactions: currentReactions
+        await chatRef.update({
+            lastMessage: { text: preview, sender: user.username, senderId: user.userId },
+            lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-     } catch (error) {
-        console.error("Помилка реакції:", error);
-    }
+
+        const savedMessage = {
+            id: docRef.id,
+            ...messageData,
+            timestamp: new Date().toISOString(),
+        };
+
+        io.to(chatId).emit('receive_message', savedMessage);
+
+        // Push для офлайн учасників
+        try {
+            const chatDoc = await chatRef.get();
+            const members = chatDoc.data()?.members || [];
+            const offlineMembers = members.filter(id => id !== user.userId);
+
+            if (offlineMembers.length > 0) {
+                const tokenDocs = await Promise.all(
+                    offlineMembers.map(id =>
+                        db.collection('fcm_tokens').where('userId', '==', id).get()
+                    )
+                );
+
+                const tokens = [];
+                tokenDocs.forEach(snap => snap.docs.forEach(d => tokens.push(d.id)));
+
+                if (tokens.length > 0) {
+                    const chatName = chatDoc.data()?.type === 'group'
+                        ? `[${chatDoc.data()?.name || 'Група'}] ${user.username}`
+                        : user.username;
+
+                    await admin.messaging().sendEachForMulticast({
+                        notification: { title: chatName, body: preview || '...' },
+                        tokens,
+                    });
+                }
+            }
+        } catch (e) { console.error('Push error:', e); }
     });
 
+    // --- TYPING ---
+    socket.on('typing', ({ chatId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+        socket.to(chatId || user.chatId).emit('display_typing', { username: user.username });
+    });
 
-    // --- 8. 🔥 РЕДАГУВАННЯ ПОВІДОМЛЕНЬ ---
-    socket.on('edit_message', async ({ messageId, newText, username }) => {
-        console.log(`✏️ Редагування повідомлення: ${messageId}`);
+    // --- ВИДАЛИТИ ---
+    socket.on('delete_message', async ({ messageId, chatId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+        const room = chatId || user.chatId;
         try {
-            const messageRef = db.collection('messages').doc(messageId);
-            const messageDoc = await messageRef.get();
-            
-            if (!messageDoc.exists) {
-                socket.emit('error', { message: 'Повідомлення не знайдено' });
-                return;
+            await db.collection('chats').doc(room).collection('messages').doc(messageId).delete();
+            io.to(room).emit('message_deleted', messageId);
+        } catch (e) { console.error('Delete error:', e); }
+    });
+
+    // --- РЕДАГУВАТИ ---
+    socket.on('edit_message', async ({ messageId, newText, chatId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+        const room = chatId || user.chatId;
+        try {
+            const ref = db.collection('chats').doc(room).collection('messages').doc(messageId);
+            const doc = await ref.get();
+            if (!doc.exists || doc.data().senderId !== user.userId) return;
+            await ref.update({ text: newText, edited: true, editedAt: admin.firestore.FieldValue.serverTimestamp() });
+            io.to(room).emit('message_edited', { messageId, newText, edited: true });
+        } catch (e) { console.error('Edit error:', e); }
+    });
+
+    // --- РЕАКЦІЯ ---
+    socket.on('add_reaction', async ({ messageId, emoji, chatId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+        const room = chatId || user.chatId;
+        try {
+            const ref = db.collection('chats').doc(room).collection('messages').doc(messageId);
+            const doc = await ref.get();
+            if (!doc.exists) return;
+            const reactions = doc.data().reactions || {};
+            if (!reactions[emoji]) reactions[emoji] = [];
+            const idx = reactions[emoji].indexOf(user.userId);
+            if (idx === -1) reactions[emoji].push(user.userId);
+            else {
+                reactions[emoji].splice(idx, 1);
+                if (!reactions[emoji].length) delete reactions[emoji];
             }
-            
-            const messageData = messageDoc.data();
-            
-            // Перевірка: чи користувач є автором
-            if (messageData.sender !== username) {
-                socket.emit('error', { message: 'Ви не можете редагувати це повідомлення' });
-                return;
+            await ref.update({ reactions });
+            io.to(room).emit('reaction_updated', { messageId, reactions });
+        } catch (e) { console.error('Reaction error:', e); }
+    });
+
+    // --- MARK READ ---
+    socket.on('mark_read', async ({ chatId, messageId }) => {
+        const user = onlineUsers.get(socket.id);
+        if (!user) return;
+        const room = chatId || user.chatId;
+        try {
+            if (messageId) {
+                const ref = db.collection('chats').doc(room).collection('messages').doc(messageId);
+                await ref.update({ readBy: admin.firestore.FieldValue.arrayUnion(user.userId) });
             }
-            
-            // Оновлюємо
-            await messageRef.update({
-                text: newText,
-                edited: true,
-                editedAt: admin.firestore.FieldValue.serverTimestamp()
+            socket.to(room).emit('message_read_update', { readBy: user.userId });
+        } catch (e) { }
+    });
+
+    // --- FCM TOKEN ---
+    socket.on('register_token', async (data) => {
+        const user = onlineUsers.get(socket.id);
+        const token = typeof data === 'string' ? data : data?.token;
+        const userId = user?.userId || data?.userId;
+        if (token && userId) {
+            await db.collection('fcm_tokens').doc(token).set({
+                userId,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
-            
-            // Повідомляємо всіх
-            io.emit('message_edited', {
-                messageId,
-                newText,
-                edited: true
-            });
-            
-            console.log(`✅ Повідомлення відредаговано`);
-        } catch (error) {
-            console.error("Помилка редагування:", error);
-            socket.emit('error', { message: 'Помилка редагування' });
         }
     });
 
-
-    socket.on('disconnect', () => {
-        console.log(`[DISC] Відключено: ${socket.id}`);
+    // --- DISCONNECT ---
+    socket.on('disconnect', async () => {
+        const user = onlineUsers.get(socket.id);
+        if (user) {
+            try {
+                await db.collection('users').doc(user.userId).update({
+                    online: false,
+                    lastSeen: admin.firestore.FieldValue.serverTimestamp()
+                });
+                if (user.chatId) io.to(user.chatId).emit('online_users', getOnlineInChat(user.chatId));
+            } catch (e) { }
+            onlineUsers.delete(socket.id);
+        }
+        console.log(`[DISC] ${socket.id}`);
     });
 });
 
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+function getOnlineInChat(chatId) {
+    const users = [];
+    for (const [, u] of onlineUsers) {
+        if (u.chatId === chatId) users.push(u.username);
+    }
+    return [...new Set(users)];
+}
+
+server.listen(PORT, () => console.log(`Private Messenger Server on port ${PORT} 🔐`));
 
 // add function 'real ststus deliverey messege'

@@ -1,7 +1,7 @@
 {
-  "name": "messenger-y-server",
-  "version": "1.0.0",
-  "description": "",
+  "name": "messenger-private-server",
+  "version": "2.0.0",
+  "description": "Private Messenger Backend with DM + Groups",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "firebase-admin": "^13.6.1",
