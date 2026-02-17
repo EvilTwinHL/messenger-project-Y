@@ -324,7 +324,7 @@ async function loadChatHistory(chatId, socket) {
         const snapshot = await db.collection('chats').doc(chatId)
             .collection('messages')
             .orderBy('timestamp', 'desc')
-            .limit(100)
+            .limit(200)
             .get();
         const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).reverse();
         socket.emit('load_history', history);
