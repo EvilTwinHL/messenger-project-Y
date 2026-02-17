@@ -15,6 +15,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'animated_widgets.dart';
 import 'package:vibration/vibration.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'voice_recorder.dart';
+import 'audio_player_widget.dart';
 
 // ==========================================
 // 🎨 НАЛАШТУВАННЯ КОЛЬОРІВ ТА СЕРВЕРА
@@ -365,6 +369,9 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _editingOriginalText;
   bool _isEditing = false;
 
+  // 🔥 НОВИЙ КОД: Voice recording змінні
+  bool _isRecording = false;
+
   @override
   void initState() {
     super.initState();
@@ -685,6 +692,59 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelEditing();
   }
 
+  // 🔥 НОВИЙ КОД: Voice recording функції
+  Future<void> _startVoiceRecording() async {
+    final status = await Permission.microphone.request();
+    if (status.isGranted) {
+      setState(() => _isRecording = true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Потрібен доступ до мікрофону')),
+      );
+    }
+  }
+
+  void _cancelVoiceRecording() {
+    setState(() => _isRecording = false);
+  }
+
+  Future<void> _sendVoiceMessage(String path, int duration) async {
+    setState(() => _isRecording = false);
+
+    try {
+      final file = File(path);
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse(
+          '$serverUrl/upload-audio',
+        ), // 🔥 ВИПРАВЛЕНО: /upload → /upload-audio
+      );
+      request.files.add(await http.MultipartFile.fromPath('audio', file.path));
+
+      final response = await request.send();
+      final responseData = await response.stream.bytesToString();
+      final json = jsonDecode(responseData);
+
+      if (json['url'] != null) {
+        sendMessage(
+          audioUrl: json['url'],
+          audioDuration: duration,
+          type: 'voice',
+        );
+      }
+
+      // Видаляємо тимчасовий файл
+      await file.delete();
+    } catch (e) {
+      print('Помилка відправки голосового: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Помилка відправки голосового повідомлення'),
+        ),
+      );
+    }
+  }
+
   // 🔥 НОВИЙ КОД: Функція для додавання реакції
   void _addReaction(String messageId, String emoji) {
     socket.emit('add_reaction', {
@@ -694,9 +754,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void sendMessage({String? imageUrl, String type = 'text'}) {
+  void sendMessage({
+    String? imageUrl,
+    String? audioUrl, // 🔥 НОВИЙ
+    int? audioDuration, // 🔥 НОВИЙ
+    String type = 'text',
+  }) {
     String text = textController.text.trim();
-    if (text.isEmpty && imageUrl == null) return;
+    if (text.isEmpty && imageUrl == null && audioUrl == null) return;
 
     // 🔥 НОВИЙ КОД: Якщо редагуємо - зберігаємо зміни
     if (_isEditing) {
@@ -706,10 +771,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 🔥 ВИПРАВЛЕНО: Додаємо всі поля одразу при ініціалізації
     final messageData = {
-      'text': imageUrl ?? text,
+      'text': imageUrl ?? audioUrl ?? text,
       'sender': myName,
       'senderAvatar': widget.avatarUrl,
       'type': type,
+      if (audioUrl != null) 'audioUrl': audioUrl, // 🔥 НОВИЙ
+      if (audioDuration != null) 'audioDuration': audioDuration, // 🔥 НОВИЙ
       // Додаємо replyTo відразу (буде null якщо немає reply)
       if (_replyToMessageId != null)
         'replyTo': {
@@ -1098,15 +1165,37 @@ class _ChatScreenState extends State<ChatScreen> {
                     messages.length +
                     (_isTyping && _typingUser != null ? 1 : 0) +
                     (_replyToMessageId != null ? 1 : 0) + // reply preview
-                    (_isEditing ? 1 : 0), // 🔥 НОВИЙ: editing preview
+                    (_isEditing ? 1 : 0) + // editing preview
+                    (_isRecording ? 1 : 0), // 🔥 НОВИЙ: voice recorder
                 itemBuilder: (context, index) {
-                  // 🔥 НОВИЙ КОД: Reply/Edit Preview як останній елемент
+                  // 🔥 НОВИЙ КОД: Reply/Edit/Voice Preview як останній елемент
                   final totalMessages = messages.length;
                   final hasTyping = _isTyping && _typingUser != null;
                   final hasReply = _replyToMessageId != null;
                   final hasEditing = _isEditing;
+                  final hasRecording = _isRecording;
 
-                  // Показуємо editing preview (якщо є) - останнім
+                  // Показуємо voice recorder (якщо є) - останнім
+                  if (hasRecording &&
+                      index ==
+                          totalMessages +
+                              (hasTyping ? 1 : 0) +
+                              (hasReply ? 1 : 0) +
+                              (hasEditing ? 1 : 0)) {
+                    return Padding(
+                      padding: const EdgeInsets.only(
+                        top: 8,
+                        left: 10,
+                        right: 10,
+                      ),
+                      child: VoiceRecorder(
+                        onRecordComplete: _sendVoiceMessage,
+                        onCancel: _cancelVoiceRecording,
+                      ),
+                    );
+                  }
+
+                  // Показуємо editing preview (якщо є)
                   if (hasEditing &&
                       index ==
                           totalMessages +
@@ -1174,12 +1263,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: AnimatedMessageBubble(
                             isMe: isMe,
                             child: MessageBubble(
-                              text: msg['type'] == 'image'
+                              text:
+                                  msg['type'] == 'image' ||
+                                      msg['type'] == 'voice'
                                   ? ''
                                   : (msg['text'] ?? ''),
                               imageUrl: msg['type'] == 'image'
                                   ? msg['text']
                                   : null,
+                              audioUrl: msg['audioUrl'], // 🔥 НОВИЙ
+                              audioDuration: msg['audioDuration'], // 🔥 НОВИЙ
                               sender: msg['sender'] ?? 'Anon',
                               isMe: isMe,
                               timestamp: msg['timestamp'],
@@ -1189,7 +1282,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               messageId: msg['id'],
                               currentUsername: myName,
                               onReactionTap: _addReaction,
-                              edited: msg['edited'] == true, // 🔥 НОВИЙ
+                              edited: msg['edited'] == true,
                             ),
                           ),
                         ),
@@ -1224,9 +1317,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
+                    // 🔥 ЗМІНЕНО: Кнопка мікрофону замість add
                     _buildFloatingButton(
-                      icon: Icons.add,
-                      onPressed: _pickAndUploadImage,
+                      icon: Icons.mic,
+                      onPressed: _startVoiceRecording,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -1365,6 +1459,8 @@ class MessageBubble extends StatelessWidget {
   final String text;
   final String sender;
   final String? imageUrl;
+  final String? audioUrl; // 🔥 НОВИЙ
+  final int? audioDuration; // 🔥 НОВИЙ
   final bool isMe;
   final dynamic timestamp;
   final String? avatarUrl;
@@ -1374,7 +1470,7 @@ class MessageBubble extends StatelessWidget {
   final String messageId;
   final String currentUsername;
   final Function(String messageId, String emoji)? onReactionTap;
-  final bool edited; // 🔥 НОВИЙ
+  final bool edited;
 
   const MessageBubble({
     super.key,
@@ -1382,6 +1478,8 @@ class MessageBubble extends StatelessWidget {
     required this.sender,
     required this.isMe,
     this.imageUrl,
+    this.audioUrl, // 🔥 НОВИЙ
+    this.audioDuration, // 🔥 НОВИЙ
     this.timestamp,
     this.avatarUrl,
     this.isRead = false,
@@ -1390,7 +1488,7 @@ class MessageBubble extends StatelessWidget {
     required this.messageId,
     required this.currentUsername,
     this.onReactionTap,
-    this.edited = false, // 🔥 НОВИЙ
+    this.edited = false,
   });
 
   @override
@@ -1469,6 +1567,14 @@ class MessageBubble extends StatelessWidget {
                       ),
                     ),
 
+                  // 🔥 НОВИЙ КОД: Voice message player
+                  if (audioUrl != null)
+                    AudioMessagePlayer(
+                      audioUrl: audioUrl!,
+                      duration: audioDuration,
+                      isMe: isMe,
+                    ),
+
                   if (text.isNotEmpty)
                     Text(
                       text,
@@ -1488,7 +1594,7 @@ class MessageBubble extends StatelessWidget {
                       // 🔥 НОВИЙ КОД: Показуємо "edited" якщо повідомлення відредаговано
                       if (edited) ...[
                         Text(
-                          'edited.',
+                          'ред.',
                           style: TextStyle(
                             fontSize: 10,
                             color: Colors.white.withOpacity(0.4),

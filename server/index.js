@@ -102,6 +102,41 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     }
 });
 
+// --- 🎤 ЗАВАНТАЖЕННЯ АУДІО (ГОЛОСОВІ ПОВІДОМЛЕННЯ) ---
+app.post('/upload-audio', upload.single('audio'), async (req, res) => {
+    if (!req.file) return res.status(400).send('No audio file');
+
+    try {
+        const localFilePath = req.file.path;
+        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
+        const remoteFileName = `audio/${Date.now()}_${safeName}`;
+
+        // 1. Завантажуємо в Firebase Storage
+        await bucket.upload(localFilePath, {
+            destination: remoteFileName,
+            metadata: {
+                contentType: req.file.mimetype || 'audio/aac',
+            }
+        });
+
+        // 2. Отримуємо публічне посилання
+        const file = bucket.file(remoteFileName);
+        const [url] = await file.getSignedUrl({
+            action: 'read',
+            expires: '03-01-2500'
+        });
+
+        // 3. Видаляємо тимчасовий файл
+        fs.unlinkSync(localFilePath);
+
+        res.json({ url: url });
+
+    } catch (error) {
+        console.error("Помилка завантаження аудіо:", error);
+        res.status(500).send("Audio upload failed");
+    }
+});
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" },
 
@@ -185,8 +220,10 @@ io.on('connection', async (socket) => {
             type: data.type || 'text',
             imageUrl: data.imageUrl || null,
             replyTo: data.replyTo || null,
+            audioUrl: data.audioUrl || null, // 🔥 НОВИЙ: для голосових
+            audioDuration: data.audioDuration || null, // 🔥 НОВИЙ: тривалість
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            read: false // 🔥 НОВЕ: По замовчуванню непрочитане
+            read: false
         };
 
         // А) 🔥 ЗМІНА: Зберігаємо і отримуємо посилання (docRef), щоб знати ID
