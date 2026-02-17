@@ -17,7 +17,7 @@ import 'package:vibration/vibration.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'voice_recorder.dart';
+import 'package:record/record.dart'; // 🔥 Прямий запис без окремого VoiceRecorder
 import 'audio_player_widget.dart';
 
 // ==========================================
@@ -364,13 +364,21 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _replyToText;
   String? _replyToSender;
 
-  // 🔥 НОВИЙ КОД: Edit змінні
+  // 🔥 Edit змінні
   String? _editingMessageId;
   String? _editingOriginalText;
   bool _isEditing = false;
 
-  // 🔥 НОВИЙ КОД: Voice recording змінні
+  // 🔥 Voice recording (hold-to-record)
+  final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
+  bool _showVoiceConfirm = false;
+  String? _recordedFilePath;
+  int _recordedDuration = 0;
+  Timer? _recordingTimer;
+
+  // 🔥 Input bar стан
+  bool _hasText = false;
 
   @override
   void initState() {
@@ -381,6 +389,13 @@ class _ChatScreenState extends State<ChatScreen> {
       Future.delayed(const Duration(seconds: 2), setupPushNotifications);
     }
     _checkShorebirdSilent();
+    // 🔥 Слухаємо зміни тексту для анімації кнопок
+    textController.addListener(() {
+      final hasText = textController.text.trim().isNotEmpty;
+      if (hasText != _hasText) {
+        setState(() => _hasText = hasText);
+      }
+    });
   }
 
   Future<void> _checkShorebirdSilent() async {
@@ -693,37 +708,91 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // 🔥 НОВИЙ КОД: Voice recording функції
-  Future<void> _startVoiceRecording() async {
+  // 🔥 HOLD-TO-RECORD: Починаємо запис при затисканні
+  Future<void> _onMicPressStart() async {
     final status = await Permission.microphone.request();
-    if (status.isGranted) {
-      setState(() => _isRecording = true);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Потрібен доступ до мікрофону')),
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Потрібен доступ до мікрофону')),
+        );
+      }
+      return;
+    }
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      _recordedFilePath =
+          '${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}.aac';
+      _recordedDuration = 0;
+
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+        ),
+        path: _recordedFilePath!,
       );
+
+      if (mounted) {
+        setState(() => _isRecording = true);
+        _scrollToBottom();
+      }
+
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (mounted) setState(() => _recordedDuration++);
+      });
+    } catch (e) {
+      print('Помилка запису: $e');
     }
   }
 
-  void _cancelVoiceRecording() {
-    setState(() => _isRecording = false);
+  // 🔥 HOLD-TO-RECORD: Зупиняємо і показуємо підтвердження
+  Future<void> _onMicPressEnd() async {
+    if (!_isRecording) return;
+
+    _recordingTimer?.cancel();
+    final path = await _audioRecorder.stop();
+
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+        if (_recordedDuration >= 1 && path != null) {
+          _recordedFilePath = path;
+          _showVoiceConfirm = true;
+        } else {
+          if (path != null) {
+            try {
+              File(path).deleteSync();
+            } catch (_) {}
+          }
+          _recordedFilePath = null;
+        }
+      });
+      _scrollToBottom();
+    }
   }
 
-  Future<void> _sendVoiceMessage(String path, int duration) async {
-    setState(() => _isRecording = false);
+  // 🔥 Відправляємо підтверджений голосовий запис
+  Future<void> _confirmSendVoice() async {
+    if (_recordedFilePath == null) return;
+    final path = _recordedFilePath!;
+    final duration = _recordedDuration;
+    setState(() {
+      _showVoiceConfirm = false;
+      _recordedFilePath = null;
+    });
 
     try {
       final file = File(path);
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse(
-          '$serverUrl/upload-audio',
-        ), // 🔥 ВИПРАВЛЕНО: /upload → /upload-audio
+        Uri.parse('$serverUrl/upload-audio'),
       );
       request.files.add(await http.MultipartFile.fromPath('audio', file.path));
-
       final response = await request.send();
-      final responseData = await response.stream.bytesToString();
-      final json = jsonDecode(responseData);
+      final json = jsonDecode(await response.stream.bytesToString());
 
       if (json['url'] != null) {
         sendMessage(
@@ -732,17 +801,30 @@ class _ChatScreenState extends State<ChatScreen> {
           type: 'voice',
         );
       }
-
-      // Видаляємо тимчасовий файл
       await file.delete();
     } catch (e) {
       print('Помилка відправки голосового: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Помилка відправки голосового повідомлення'),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Помилка відправки голосового')),
+        );
+      }
     }
+  }
+
+  // 🔥 Скасовуємо голосовий запис
+  void _cancelVoice() {
+    if (_recordedFilePath != null) {
+      try {
+        File(_recordedFilePath!).deleteSync();
+      } catch (_) {}
+    }
+    setState(() {
+      _isRecording = false;
+      _showVoiceConfirm = false;
+      _recordedFilePath = null;
+      _recordedDuration = 0;
+    });
   }
 
   // 🔥 НОВИЙ КОД: Функція для додавання реакції
@@ -801,9 +883,9 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: const Color.fromARGB(255, 40, 40, 40).withOpacity(1.0),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       child: Row(
         children: [
@@ -856,13 +938,13 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: AppColors.mainColor.withOpacity(0.1),
+        color: const Color.fromARGB(255, 40, 40, 40).withOpacity(1.0),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.mainColor.withOpacity(0.3)),
+        border: Border.all(color: AppColors.white.withOpacity(0.08)),
       ),
       child: Row(
         children: [
-          Icon(Icons.edit, color: AppColors.mainColor, size: 20),
+          Icon(Icons.edit, color: AppColors.white, size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -872,9 +954,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   'Редагування повідомлення',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     color: AppColors.mainColor,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -882,7 +964,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _editingOriginalText ?? '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
               ],
             ),
@@ -898,131 +980,230 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _showContextMenu(BuildContext context, Map message) {
     final isMe = message['sender'] == myName;
+    final isText = message['type'] != 'image' && message['type'] != 'voice';
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF2a2d38),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── 1. Реакції (окрема плаваюча капсула) ──
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2a2d3a),
+                    borderRadius: BorderRadius.circular(32),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...['❤️', '👍', '👎', '😂', '😮', '😢'].map(
+                        (emoji) => GestureDetector(
+                          onTap: () {
+                            _addReaction(message['id'], emoji);
+                            Navigator.pop(ctx);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 26),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Кнопка "більше"
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          // Показуємо повний picker через showDialog
+                          showDialog(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              backgroundColor: const Color(0xFF2a2d3a),
+                              contentPadding: const EdgeInsets.all(12),
+                              content: ReactionPicker(
+                                onReactionSelected: (emoji) {
+                                  Navigator.pop(context);
+                                  _addReaction(message['id'], emoji);
+                                },
+                              ),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.more_horiz,
+                            color: Colors.white70,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── 2. Меню дій ──
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2a2d3a),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _menuItem(
+                        ctx,
+                        icon: Icons.reply_outlined,
+                        label: 'Відповісти',
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _setReplyTo(message);
+                        },
+                      ),
+                      _menuDivider(),
+                      _menuItem(
+                        ctx,
+                        icon: Icons.forward_outlined,
+                        label: 'Переслати',
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Незабаром!'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      ),
+                      if (isText) ...[
+                        _menuDivider(),
+                        _menuItem(
+                          ctx,
+                          icon: Icons.copy_outlined,
+                          label: 'Копіювати',
+                          onTap: () {
+                            Clipboard.setData(
+                              ClipboardData(text: message['text'] ?? ''),
+                            );
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Скопійовано'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                      _menuDivider(),
+                      _menuItem(
+                        ctx,
+                        icon: Icons.info_outline,
+                        label: 'Інфо',
+                        onTap: () {
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                      _menuDivider(),
+                      _menuItem(
+                        ctx,
+                        icon: Icons.push_pin_outlined,
+                        label: 'Закріпити',
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Незабаром!'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      ),
+                      if (isMe && isText) ...[
+                        _menuDivider(),
+                        _menuItem(
+                          ctx,
+                          icon: Icons.edit_outlined,
+                          label: 'Редагувати',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _startEditingMessage(message);
+                          },
+                        ),
+                      ],
+                      _menuDivider(),
+                      _menuItem(
+                        ctx,
+                        icon: Icons.delete_outline,
+                        label: 'Видалити',
+                        color: Colors.redAccent,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _showDeleteConfirmDialog(message['id']);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Елемент меню
+  Widget _menuItem(
+    BuildContext ctx, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color color = Colors.white,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
           children: [
-            // 🔥 НОВИЙ КОД: Панель реакцій зверху
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: ReactionPicker(
-                onReactionSelected: (emoji) {
-                  _addReaction(message['id'], emoji);
-                  Navigator.pop(ctx);
-                },
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 16),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
               ),
             ),
-            const Divider(color: Colors.white12, height: 1),
-
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(Icons.more_horiz, color: Colors.white70),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Дії з повідомленням',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(color: Colors.white12, height: 1),
-
-            ListTile(
-              leading: const Icon(Icons.copy, color: Colors.white70),
-              title: const Text(
-                'Копіювати',
-                style: TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: message['text'] ?? ''));
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Скопійовано'),
-                    duration: Duration(seconds: 1),
-                  ),
-                );
-              },
-            ),
-
-            // 🔥 НОВИЙ КОД: Кнопка відповісти
-            ListTile(
-              leading: const Icon(Icons.reply, color: Colors.white70),
-              title: const Text(
-                'Відповісти',
-                style: TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _setReplyTo(message);
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.forward, color: Colors.white70),
-              title: const Text(
-                'Переслати',
-                style: TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Функція в розробці'),
-                    duration: Duration(seconds: 1),
-                  ),
-                );
-              },
-            ),
-
-            if (isMe) ...[
-              const Divider(color: Colors.white12, height: 1),
-              // 🔥 НОВИЙ КОД: Кнопка редагувати (тільки для текстових повідомлень)
-              if (message['type'] != 'image')
-                ListTile(
-                  leading: const Icon(Icons.edit, color: Colors.white70),
-                  title: const Text(
-                    'Редагувати',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _startEditingMessage(message);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text(
-                  'Видалити',
-                  style: TextStyle(color: Colors.red),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showDeleteConfirmDialog(message['id']);
-                },
-              ),
-            ],
-
-            SizedBox(height: MediaQuery.of(context).padding.bottom),
           ],
         ),
       ),
     );
   }
+
+  Widget _menuDivider() =>
+      const Divider(color: Colors.white10, height: 1, indent: 58);
 
   void _showDeleteConfirmDialog(String messageId) {
     showDialog(
@@ -1088,6 +1269,8 @@ class _ChatScreenState extends State<ChatScreen> {
     textController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
+    _recordingTimer?.cancel();
+    _audioRecorder.dispose();
     super.dispose();
   }
 
@@ -1159,72 +1342,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   left: 16,
                   right: 16,
                   top: 100,
-                  bottom: 100 + MediaQuery.of(context).padding.bottom,
+                  bottom:
+                      160 +
+                      MediaQuery.of(context).padding.bottom +
+                      (_replyToMessageId != null ? 60 : 0) +
+                      (_isEditing ? 60 : 0) +
+                      (_isRecording ? 55 : 0) +
+                      (_showVoiceConfirm ? 70 : 0),
                 ),
                 itemCount:
                     messages.length +
-                    (_isTyping && _typingUser != null ? 1 : 0) +
-                    (_replyToMessageId != null ? 1 : 0) + // reply preview
-                    (_isEditing ? 1 : 0) + // editing preview
-                    (_isRecording ? 1 : 0), // 🔥 НОВИЙ: voice recorder
+                    (_isTyping && _typingUser != null ? 1 : 0),
                 itemBuilder: (context, index) {
-                  // 🔥 НОВИЙ КОД: Reply/Edit/Voice Preview як останній елемент
                   final totalMessages = messages.length;
                   final hasTyping = _isTyping && _typingUser != null;
-                  final hasReply = _replyToMessageId != null;
-                  final hasEditing = _isEditing;
-                  final hasRecording = _isRecording;
 
-                  // Показуємо voice recorder (якщо є) - останнім
-                  if (hasRecording &&
-                      index ==
-                          totalMessages +
-                              (hasTyping ? 1 : 0) +
-                              (hasReply ? 1 : 0) +
-                              (hasEditing ? 1 : 0)) {
-                    return Padding(
-                      padding: const EdgeInsets.only(
-                        top: 8,
-                        left: 10,
-                        right: 10,
-                      ),
-                      child: VoiceRecorder(
-                        onRecordComplete: _sendVoiceMessage,
-                        onCancel: _cancelVoiceRecording,
-                      ),
-                    );
-                  }
-
-                  // Показуємо editing preview (якщо є)
-                  if (hasEditing &&
-                      index ==
-                          totalMessages +
-                              (hasTyping ? 1 : 0) +
-                              (hasReply ? 1 : 0)) {
-                    return Padding(
-                      padding: const EdgeInsets.only(
-                        top: 8,
-                        left: 10,
-                        right: 10,
-                      ),
-                      child: _buildEditingHeader(),
-                    );
-                  }
-
-                  // Показуємо reply preview (якщо є)
-                  if (hasReply &&
-                      index == totalMessages + (hasTyping ? 1 : 0)) {
-                    return Padding(
-                      padding: const EdgeInsets.only(
-                        top: 8,
-                        left: 10,
-                        right: 10,
-                      ),
-                      child: _buildReplyPreview(),
-                    );
-                  }
-
-                  // Показуємо typing indicator
+                  // Typing indicator
                   if (hasTyping && index == totalMessages) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -1250,14 +1383,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   return Column(
                     children: [
                       if (showDateSeparator) DateSeparator(date: dateLabel),
-
-                      // 🔥 SWIPE-TO-REPLY: Потягніть вправо для відповіді
                       SwipeToReply(
                         onReply: () => _setReplyTo(msg),
-                        replyIconColor: isMe
-                            ? Colors
-                                  .white // Для своїх
-                            : Colors.white, // Для чужих
+                        replyIconColor: Colors.white,
                         child: GestureDetector(
                           onLongPress: () => _showContextMenu(context, msg),
                           child: AnimatedMessageBubble(
@@ -1271,8 +1399,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               imageUrl: msg['type'] == 'image'
                                   ? msg['text']
                                   : null,
-                              audioUrl: msg['audioUrl'], // 🔥 НОВИЙ
-                              audioDuration: msg['audioDuration'], // 🔥 НОВИЙ
+                              audioUrl: msg['audioUrl'],
+                              audioDuration: msg['audioDuration'],
                               sender: msg['sender'] ?? 'Anon',
                               isMe: isMe,
                               timestamp: msg['timestamp'],
@@ -1293,97 +1421,371 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
 
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                padding: EdgeInsets.fromLTRB(
-                  10,
-                  20,
-                  10,
-                  10 + MediaQuery.of(context).padding.bottom,
-                ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      AppColors.bgGradientBot.withOpacity(0.8),
-                    ],
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // 🔥 ЗМІНЕНО: Кнопка мікрофону замість add
-                    _buildFloatingButton(
-                      icon: Icons.mic,
-                      onPressed: _startVoiceRecording,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GlassBox(
-                        borderRadius: 30,
-                        opacity: 0.15,
-                        blur: 20,
-                        border: Border.all(color: Colors.white12),
-                        child: TextField(
-                          controller: textController,
-                          onChanged: (text) {
-                            if (text.isNotEmpty) {
-                              socket.emit('typing', {
-                                'username': myName,
-                                'roomId': 'general',
-                              });
-                            }
-                          },
-                          style: const TextStyle(color: Colors.white),
-                          maxLines: 6,
-                          minLines: 1,
-                          decoration: const InputDecoration(
-                            hintText: "Повідомлення...",
-                            hintStyle: TextStyle(color: Colors.white38),
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _buildFloatingButton(
-                      // 🔥 НОВИЙ КОД: Різні іконки для відправки і редагування
-                      icon: _isEditing ? Icons.check : Icons.arrow_upward,
-                      onPressed: sendMessage,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            // 🔥 НОВА АРХІТЕКТУРА: Всі панелі + input bar знизу
+            Positioned(bottom: 0, left: 0, right: 0, child: _buildBottomArea()),
           ],
         ),
       ),
     );
   }
 
+  // ======================================
+  // 🔥 НОВИЙ BOTTOM AREA
+  // ======================================
+  Widget _buildBottomArea() {
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+    final hasPanel =
+        _replyToMessageId != null ||
+        _isEditing ||
+        _isRecording ||
+        _showVoiceConfirm;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            AppColors.bgGradientBot.withOpacity(0.95),
+          ],
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Panels (reply, edit, recording, confirm)
+          if (hasPanel)
+            Container(
+              margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyToMessageId != null) _buildReplyPreview(),
+                  if (_isEditing) _buildEditingHeader(),
+                  if (_isRecording) _buildActiveRecordingPanel(),
+                  if (_showVoiceConfirm) _buildVoiceConfirmPanel(),
+                ],
+              ),
+            ),
+
+          // Input row
+          Padding(
+            padding: EdgeInsets.fromLTRB(10, 6, 10, 8 + safeBottom),
+            child: Row(
+              crossAxisAlignment:
+                  CrossAxisAlignment.center, // ← center замість end
+              children: [
+                _buildLeftAnimatedButton(),
+                const SizedBox(width: 6),
+                Expanded(child: _buildTextFieldWithIcons()),
+                const SizedBox(width: 6),
+                _buildRightAnimatedButton(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Активний запис (під час тримання кнопки)
+  Widget _buildActiveRecordingPanel() {
+    String _fmt(int s) =>
+        '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.red.withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.circle, color: Colors.red, size: 12),
+          const SizedBox(width: 10),
+          const Text(
+            'Запис...',
+            style: TextStyle(
+              color: Colors.red,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            _fmt(_recordedDuration),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          const Text(
+            'Відпустіть для надсилання',
+            style: TextStyle(color: Colors.white54, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Підтвердження надсилання голосового
+  Widget _buildVoiceConfirmPanel() {
+    String _fmt(int s) =>
+        '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: AppColors.mainColor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.mainColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.mic, color: AppColors.mainColor, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Голосове повідомлення',
+                  style: TextStyle(
+                    color: AppColors.mainColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  _fmt(_recordedDuration),
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          // Скасувати
+          GestureDetector(
+            onTap: _cancelVoice,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Видалити',
+                style: TextStyle(
+                  color: Colors.red,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Надіслати
+          GestureDetector(
+            onTap: _confirmSendVoice,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.mainColor.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Надіслати',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔥 Текстове поле з кнопками mic/video/plus всередині (suffix)
+  Widget _buildTextFieldWithIcons() {
+    return GlassBox(
+      borderRadius: 24,
+      opacity: 0.15,
+      blur: 20,
+      border: Border.all(color: Colors.white12),
+      child: Row(
+        crossAxisAlignment:
+            CrossAxisAlignment.center, // ← центрування по вертикалі
+        children: [
+          Expanded(
+            child: TextField(
+              controller: textController,
+              onChanged: (text) {
+                if (text.isNotEmpty) {
+                  socket.emit('typing', {
+                    'username': myName,
+                    'roomId': 'general',
+                  });
+                }
+              },
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              maxLines: 5,
+              minLines: 1,
+              decoration: const InputDecoration(
+                hintText: "Повідомлення...",
+                hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ), // ← менше по вертикалі
+                isDense: true, // ← ще компактніше
+              ),
+            ),
+          ),
+          // Іконки праворуч всередині поля
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              transitionBuilder: (child, anim) =>
+                  ScaleTransition(scale: anim, child: child),
+              child: _hasText
+                  // Є текст → іконка "прикріпити"
+                  ? _buildInlineIcon(
+                      key: const ValueKey('plus'),
+                      icon: Icons.add_circle_outline, // ← кругла іконка +
+                      onTap: _pickAndUploadImage,
+                      color: Colors.white54,
+                    )
+                  // Без тексту → мікрофон + відео
+                  : Row(
+                      key: const ValueKey('mic-video'),
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onLongPressStart: (_) => _onMicPressStart(),
+                          onLongPressEnd: (_) => _onMicPressEnd(),
+                          child: _buildInlineIconRaw(
+                            icon: Icons.mic,
+                            color: _isRecording ? Colors.red : Colors.white54,
+                          ),
+                        ),
+                        _buildInlineIconRaw(
+                          icon: Icons.videocam_outlined,
+                          color: Colors.white38,
+                          onTap: () =>
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Відео — незабаром!'),
+                                  duration: Duration(seconds: 1),
+                                ),
+                              ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Компактна іконка без padding-зайвого
+  Widget _buildInlineIconRaw({
+    required IconData icon,
+    Color color = Colors.white54,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+        child: Icon(icon, color: color, size: 20),
+      ),
+    );
+  }
+
+  Widget _buildInlineIcon({
+    required Key key,
+    required IconData icon,
+    required VoidCallback onTap,
+    Color color = Colors.white54,
+  }) {
+    return GestureDetector(
+      key: key,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+        child: Icon(icon, color: color, size: 20),
+      ),
+    );
+  }
+
+  // 🔥 Права кнопка: attach (без тексту) → send (з текстом), анімована
+  Widget _buildRightAnimatedButton() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      transitionBuilder: (child, animation) =>
+          ScaleTransition(scale: animation, child: child),
+      child: _hasText || _isEditing
+          ? _buildCircleButton(
+              key: const ValueKey('send'),
+              icon: _isEditing ? Icons.check : Icons.arrow_upward,
+              onPressed: sendMessage,
+              color: AppColors.mainColor,
+              size: 32, // ← 36 → 32
+            )
+          : _buildCircleButton(
+              key: const ValueKey('attach'),
+              icon: Icons.attach_file,
+              onPressed: _pickAndUploadImage,
+              color: AppColors.mainColor,
+              size: 32, // ← 36 → 32
+            ),
+    );
+  }
+
+  // 🔥 Ліва кнопка не потрібна → прибираємо (можна прибрати з Row)
+  Widget _buildLeftAnimatedButton() => const SizedBox.shrink();
+
+  Widget _buildCircleButton({
+    required Key key,
+    required IconData icon,
+    required VoidCallback onPressed,
+    required Color color,
+    double size = 36,
+  }) {
+    return Container(
+      key: key,
+      width: size + 8,
+      height: size + 8,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: IconButton(
+        iconSize: size * 0.55,
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, color: Colors.white),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  // Зберігаємо для сумісності
   Widget _buildFloatingButton({
     required IconData icon,
     required VoidCallback onPressed,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.mainColor,
-        shape: BoxShape.circle,
-        // 🔥 ВИДАЛЕНО boxShadow
-      ),
-      child: IconButton(
-        icon: Icon(icon, color: Colors.white),
-        onPressed: onPressed,
-      ),
+    return _buildCircleButton(
+      key: ValueKey(icon),
+      icon: icon,
+      onPressed: onPressed,
+      color: AppColors.mainColor,
     );
   }
 }
@@ -1658,7 +2060,8 @@ class MessageBubble extends StatelessWidget {
     try {
       DateTime date;
       if (timestamp is String) {
-        date = DateTime.parse(timestamp);
+        // 🔥 ВИПРАВЛЕНО: .toLocal() конвертує UTC → місцевий час
+        date = DateTime.parse(timestamp).toLocal();
       } else if (timestamp is Map && timestamp['_seconds'] != null) {
         date = DateTime.fromMillisecondsSinceEpoch(
           timestamp['_seconds'] * 1000,
@@ -1762,8 +2165,8 @@ class ReactionsDisplay extends StatelessWidget {
               ), // 🔥 10×6 → 6×3
               decoration: BoxDecoration(
                 color: hasMyReaction
-                    ? Colors.grey[900]?.withOpacity(0.7)
-                    : Colors.grey[900]?.withOpacity(0.7),
+                    ? Colors.grey[900]?.withOpacity(0.9)
+                    : Colors.grey[900]?.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(12),
                 // 🔥 20 → 12 менш круглий
                 border: Border.all(color: Colors.white.withOpacity(0.1)),
