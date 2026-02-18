@@ -16,149 +16,55 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket();
+const bucket = admin.storage().bucket(); // Підключаємось до сховища
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // 🔥 ВАЖЛИВО: Додано для обробки JSON при авторизації
 
-// Налаштування Multer
+// Налаштування Multer (тимчасове зберігання файлу перед відправкою в хмару)
 const multer = require('multer');
 const fs = require('fs');
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: 'uploads/' }); // Тимчасова папка
 
-// ==============================================
-// 🔐 FIREBASE AUTH ENDPOINTS
-// ==============================================
+// --- 🔐 1. АВТОРИЗАЦІЯ (РЕЄСТРАЦІЯ/ВХІД + АВАТАРКА) ---
+app.post('/auth', async (req, res) => {
+    const { username, avatarUrl } = req.body;
 
-// 🔥 ПОШУК КОРИСТУВАЧІВ
-app.get('/api/search-users', async (req, res) => {
-  const query = req.query.q?.toLowerCase() || '';
-  const currentUserId = req.query.userId;
-  
-  try {
-    const usersRef = db.collection('users');
-    const snapshot = await usersRef.get();
-    
-    const users = [];
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      // Виключаємо поточного користувача з результатів
-      if (doc.id !== currentUserId && data.username?.toLowerCase().includes(query)) {
-        users.push({ 
-          id: doc.id, 
-          username: data.username,
-          email: data.email,
-          avatarUrl: data.avatarUrl || null,
-          online: data.online || false
-        });
-      }
-    });
-    
-    res.json(users);
-  } catch (error) {
-    console.error("Search error:", error);
-    res.status(500).json({ error: 'Search failed' });
-  }
-});
-
-// 🔥 СТВОРЕННЯ/ОТРИМАННЯ DM КІМНАТИ
-app.post('/api/get-or-create-dm', async (req, res) => {
-  const { userId1, userId2 } = req.body;
-
-  if (!userId1 || !userId2) {
-    return res.status(400).json({ error: 'Missing userId1 or userId2' });
-  }
-
-  try {
-    // Перевіряємо, чи вже існує DM між цими користувачами
-    const roomsRef = db.collection('rooms');
-    const snapshot = await roomsRef
-      .where('type', '==', 'direct')
-      .where('members', 'array-contains', userId1)
-      .get();
-
-    let existingRoom = null;
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      if (data.members.includes(userId2)) {
-        existingRoom = { id: doc.id, ...data };
-      }
-    });
-
-    if (existingRoom) {
-      return res.json({ roomId: existingRoom.id, room: existingRoom });
+    if (!username || username.trim().length === 0) {
+        return res.status(400).json({ error: "Ім'я не може бути пустим" });
     }
 
-    // Створюємо новий DM
-    const user1Doc = await db.collection('users').doc(userId1).get();
-    const user2Doc = await db.collection('users').doc(userId2).get();
+    try {
+        const usersRef = db.collection('users');
+        const snapshot = await usersRef.where('username', '==', username).get();
 
-    if (!user1Doc.exists || !user2Doc.exists) {
-      return res.status(404).json({ error: 'One or both users not found' });
-    }
-
-    const user1Data = user1Doc.data();
-    const user2Data = user2Doc.data();
-
-    const newRoom = {
-      type: 'direct',
-      name: `${user1Data.username} & ${user2Data.username}`,
-      members: [userId1, userId2],
-      membersData: {
-        [userId1]: {
-          username: user1Data.username,
-          avatarUrl: user1Data.avatarUrl || null,
-          email: user1Data.email || null
-        },
-        [userId2]: {
-          username: user2Data.username,
-          avatarUrl: user2Data.avatarUrl || null,
-          email: user2Data.email || null
+        if (snapshot.empty) {
+            // Створюємо нового користувача
+            const newUser = {
+                username: username,
+                avatarUrl: avatarUrl || null,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            await usersRef.add(newUser);
+            return res.json({ status: 'created', user: newUser });
+        } else {
+            // Існуючий користувач
+            const docId = snapshot.docs[0].id;
+            if (avatarUrl) {
+                await usersRef.doc(docId).update({ avatarUrl: avatarUrl });
+            }
+            
+            const userData = snapshot.docs[0].data();
+            userData.avatarUrl = avatarUrl || userData.avatarUrl;
+            
+            return res.json({ status: 'found', user: userData });
         }
-      },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdBy: userId1,
-      lastMessage: null
-    };
-
-    const docRef = await roomsRef.add(newRoom);
-    console.log(`✅ Created DM room: ${docRef.id}`);
-    
-    res.json({ roomId: docRef.id, room: { id: docRef.id, ...newRoom } });
-
-  } catch (error) {
-    console.error("Error creating DM:", error);
-    res.status(500).json({ error: 'Failed to create DM' });
-  }
+    } catch (error) {
+        console.error("Auth Error:", error);
+        res.status(500).json({ error: "Помилка сервера при вході" });
+    }
 });
-
-// 🔥 ОТРИМАННЯ ВСІХ КІМНАТ КОРИСТУВАЧА
-app.get('/api/user-rooms/:userId', async (req, res) => {
-  const { userId } = req.params;
-
-  try {
-    const roomsRef = db.collection('rooms');
-    const snapshot = await roomsRef
-      .where('members', 'array-contains', userId)
-      .orderBy('lastMessage.timestamp', 'desc')
-      .get();
-
-    const rooms = [];
-    snapshot.forEach(doc => {
-      rooms.push({ id: doc.id, ...doc.data() });
-    });
-
-    res.json(rooms);
-  } catch (error) {
-    console.error("Error fetching rooms:", error);
-    res.status(500).json({ error: 'Failed to fetch rooms' });
-  }
-});
-
-// ==============================================
-// 📤 ЗАВАНТАЖЕННЯ ФАЙЛІВ
-// ==============================================
 
 // --- ЗАВАНТАЖЕННЯ ФОТО ---
 app.post('/upload', upload.single('image'), async (req, res) => {
@@ -166,9 +72,11 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 
     try {
         const localFilePath = req.file.path;
+        // Очищаємо ім'я файлу
         const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
         const remoteFileName = `images/${Date.now()}_${safeName}`;
 
+        // 1. Завантажуємо в Firebase Storage
         await bucket.upload(localFilePath, {
             destination: remoteFileName,
             metadata: {
@@ -176,13 +84,16 @@ app.post('/upload', upload.single('image'), async (req, res) => {
             }
         });
 
+        // 2. Отримуємо публічне посилання
         const file = bucket.file(remoteFileName);
         const [url] = await file.getSignedUrl({
             action: 'read',
             expires: '03-01-2500' 
         });
 
+        // 3. Видаляємо тимчасовий файл
         fs.unlinkSync(localFilePath);
+
         res.json({ url: url });
 
     } catch (error) {
@@ -191,7 +102,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     }
 });
 
-// --- 🎤 ЗАВАНТАЖЕННЯ АУДІО ---
+// --- 🎤 ЗАВАНТАЖЕННЯ АУДІО (ГОЛОСОВІ ПОВІДОМЛЕННЯ) ---
 app.post('/upload-audio', upload.single('audio'), async (req, res) => {
     if (!req.file) return res.status(400).send('No audio file');
 
@@ -200,6 +111,7 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
         const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
         const remoteFileName = `audio/${Date.now()}_${safeName}`;
 
+        // 1. Завантажуємо в Firebase Storage
         await bucket.upload(localFilePath, {
             destination: remoteFileName,
             metadata: {
@@ -207,13 +119,16 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
             }
         });
 
+        // 2. Отримуємо публічне посилання
         const file = bucket.file(remoteFileName);
         const [url] = await file.getSignedUrl({
             action: 'read',
             expires: '03-01-2500'
         });
 
+        // 3. Видаляємо тимчасовий файл
         fs.unlinkSync(localFilePath);
+
         res.json({ url: url });
 
     } catch (error) {
@@ -222,51 +137,16 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
     }
 });
 
-// --- 📁 ЗАВАНТАЖЕННЯ ФАЙЛІВ (DOCS, PDF) ---
-app.post('/upload-file', upload.single('file'), async (req, res) => {
-    if (!req.file) return res.status(400).send('No file');
-
-    try {
-        const localFilePath = req.file.path;
-        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
-        const remoteFileName = `files/${Date.now()}_${safeName}`;
-
-        await bucket.upload(localFilePath, {
-            destination: remoteFileName,
-            metadata: {
-                contentType: req.file.mimetype,
-            }
-        });
-
-        const file = bucket.file(remoteFileName);
-        const [url] = await file.getSignedUrl({
-            action: 'read',
-            expires: '03-01-2500'
-        });
-
-        fs.unlinkSync(localFilePath);
-        res.json({ url: url, filename: req.file.originalname });
-
-    } catch (error) {
-        console.error("Помилка завантаження файлу:", error);
-        res.status(500).send("File upload failed");
-    }
-});
-
-// ==============================================
-// 🔌 SOCKET.IO - REAL-TIME
-// ==============================================
-
 const server = http.createServer(app);
-const io = new Server(server, { 
-  cors: { origin: "*" },
-  maxHttpBufferSize: 6e7
+const io = new Server(server, { cors: { origin: "*" },
+
+    maxHttpBufferSize: 6e7 // 10 MB (збільшує ліміт передачі даних)
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Server Running with Firebase Auth & Rooms 🚀');
+    res.send('Server Running (With Push Filtering) 🚀');
 });
 
 app.get('/ping', (req, res) => {
@@ -274,200 +154,195 @@ app.get('/ping', (req, res) => {
     res.send('pong');
 });
 
-// Зберігаємо userId для кожного socket
-const socketUsers = new Map();
-
 io.on('connection', async (socket) => {
-    console.log(`[CONN] Socket підключився: ${socket.id}`);
+    console.log(`[CONN] Користувач підключився: ${socket.id}`);
 
     // 🔥 Логи з телефону
     socket.on('debug_log', (msg) => {
         console.log(`📱 CLIENT LOG [${socket.id}]:`, msg);
     });
 
-    // 🔥 1. JOIN ROOM
-    socket.on('join_room', async ({ roomId, userId, username }) => {
-        socket.join(roomId);
-        socketUsers.set(socket.id, userId);
-        
-        console.log(`✅ User ${username} (${userId}) joined room ${roomId}`);
+    // --- 1. РЕЄСТРАЦІЯ ТОКЕНА ---
+    socket.on('register_token', async (data) => {
+        let token = "";
+        let username = null;
 
-        // Оновлюємо online статус
-        try {
-            await db.collection('users').doc(userId).update({
-                online: true,
-                lastSeen: admin.firestore.FieldValue.serverTimestamp()
-            });
-        } catch (e) {
-            console.error("Error updating online status:", e);
+        if (typeof data === 'string') {
+            token = data;
+        } else if (typeof data === 'object' && data.token) {
+            token = data.token;
+            username = data.username;
         }
 
-        // Завантажуємо історію кімнати
-        try {
-            const messagesRef = db.collection('messages');
-            const snapshot = await messagesRef
-                .where('roomId', '==', roomId)
-                .orderBy('timestamp', 'desc')
-                .limit(300)
-                .get();
-
-            let history = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            history = history.reverse();
-            socket.emit('load_history', history);
-        } catch (error) {
-            console.error("Error loading history:", error);
+        if(token) {
+            console.log(`💾 Збереження токена для ${username || 'Unknown'}: ${token.substring(0, 10)}...`);
+            try {
+                await db.collection('fcm_tokens').doc(token).set({
+                    username: username,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                console.log(`✅ Токен успішно записано в БД`);
+            } catch (e) {
+                console.error("❌ Помилка запису токена:", e);
+            }
         }
     });
 
-    // 🔥 2. SEND MESSAGE
-    socket.on('send_message', async (data) => {
-        console.log(`📨 Message from ${data.sender} to room ${data.roomId}`);
+    // --- 2. ЗАВАНТАЖЕННЯ ІСТОРІЇ (ОНОВЛЕНО ДЛЯ ID) ---
+    try {
+        const messagesRef = db.collection('messages');
         
+        // 1. Беремо 50 НАЙНОВІШИХ повідомлень
+        const snapshot = await messagesRef.orderBy('timestamp', 'desc').limit(300).get();
+        
+        // 🔥 ЗМІНА: Тепер ми додаємо ID документа до об'єкта повідомлення
+        let history = snapshot.docs.map(doc => {
+            return {
+                id: doc.id, // <--- ВАЖЛИВО: додаємо ID, щоб потім можна було видалити
+                ...doc.data()
+            };
+        });
+
+        // 3. Розвертаємо масив
+        history = history.reverse();
+
+        socket.emit('load_history', history);
+    } catch (error) {
+        console.error("Помилка історії:", error);
+    }
+
+    // --- 3. ОТРИМАННЯ ПОВІДОМЛЕННЯ (ОНОВЛЕНО ДЛЯ ID) ---
+    socket.on('send_message', async (data) => {
         const messageData = {
-            roomId: data.roomId,
             text: data.text || '',
-            senderId: data.senderId,
             sender: data.sender,
             senderAvatar: data.senderAvatar || null,
             type: data.type || 'text',
             imageUrl: data.imageUrl || null,
-            audioUrl: data.audioUrl || null,
-            audioDuration: data.audioDuration || null,
-            fileUrl: data.fileUrl || null,
-            fileName: data.fileName || null,
-            location: data.location || null,
             replyTo: data.replyTo || null,
+            audioUrl: data.audioUrl || null, // 🔥 НОВИЙ: для голосових
+            audioDuration: data.audioDuration || null, // 🔥 НОВИЙ: тривалість
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            reactions: {},
-            edited: false
+            read: false
         };
 
+        // А) 🔥 ЗМІНА: Зберігаємо і отримуємо посилання (docRef), щоб знати ID
+        const docRef = await db.collection('messages').add(messageData);
+        
+        // Створюємо об'єкт для відправки клієнтам з реальним ID
+        const savedMessage = {
+            id: docRef.id, // <--- ID з бази
+            ...data,       // Дані від клієнта
+            read: false,   // 🔥
+            timestamp: new Date().toISOString() // Тимчасовий час для відображення одразу
+        };
+        
+        // Б) Відправляємо всім, хто онлайн (вже з ID!)
+        io.emit('receive_message', savedMessage); 
+
+        // В) 🔥 ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ
         try {
-            const docRef = await db.collection('messages').add(messageData);
+            const tokensSnapshot = await db.collection('fcm_tokens').get();
+            
+            const tokens = tokensSnapshot.docs
+                .filter(doc => {
+                    const tokenData = doc.data();
+                    return tokenData.username !== data.sender;
+                })
+                .map(doc => doc.id);
 
-            const savedMessage = {
-                id: docRef.id,
-                ...data,
-                timestamp: new Date().toISOString()
-            };
-
-            // Відправляємо ТІЛЬКИ в цю кімнату
-            io.to(data.roomId).emit('receive_message', savedMessage);
-
-            // Оновлюємо lastMessage в rooms
-            await db.collection('rooms').doc(data.roomId).update({
-                'lastMessage.text': data.text || '📎',
-                'lastMessage.sender': data.sender,
-                'lastMessage.timestamp': admin.firestore.FieldValue.serverTimestamp()
-            });
-
-            // 🔔 PUSH-СПОВІЩЕННЯ
-            try {
-                const roomDoc = await db.collection('rooms').doc(data.roomId).get();
-                if (!roomDoc.exists) return;
-
-                const roomData = roomDoc.data();
-                const otherMembers = roomData.members.filter(m => m !== data.senderId);
+            if (tokens.length > 0) {
+                const payload = {
+                    notification: {
+                        title: `Нове від ${data.sender}`,
+                        body: data.type === 'image' ? '📷 Фото' : data.text,
+                    },
+                    tokens: tokens,
+                };
                 
-                if (otherMembers.length === 0) return;
-
-                const tokens = [];
-                for (const memberId of otherMembers) {
-                    const userDoc = await db.collection('users').doc(memberId).get();
-                    if (userDoc.exists && userDoc.data().fcmToken) {
-                        tokens.push(userDoc.data().fcmToken);
-                    }
-                }
-
-                if (tokens.length > 0) {
-                    let body = data.text;
-                    if (data.type === 'image') body = '📷 Фото';
-                    else if (data.type === 'audio') body = '🎤 Голосове повідомлення';
-                    else if (data.type === 'file') body = `📁 ${data.fileName || 'Файл'}`;
-                    else if (data.type === 'location') body = '📍 Локація';
-
-                    await admin.messaging().sendEachForMulticast({
-                        notification: {
-                            title: `${data.sender} в ${roomData.name}`,
-                            body: body
-                        },
-                        tokens
-                    });
-                    console.log(`🔔 Push sent to ${tokens.length} users`);
-                }
-            } catch (e) {
-                console.error("Push error:", e);
+                const response = await admin.messaging().sendEachForMulticast(payload);
+                console.log(`🔔 Пуш розіслано: ${response.successCount}`);
             }
         } catch (error) {
-            console.error("Error sending message:", error);
+            console.error("Помилка розсилки пушів:", error);
         }
     });
 
-    // 🔥 3. TYPING INDICATOR
+    // --- 4. ІНДИКАТОР НАБОРУ ---
     socket.on('typing', (data) => {
-        socket.to(data.roomId).emit('display_typing', data);
+        socket.broadcast.emit('display_typing', data);
     });
 
-    // 🔥 4. DELETE MESSAGE
-    socket.on('delete_message', async ({ messageId, roomId }) => {
-        console.log(`🗑️ Delete message: ${messageId}`);
+    // --- 5. 🔥 ВИДАЛЕННЯ ПОВІДОМЛЕННЯ ---
+    socket.on('delete_message', async (messageId) => {
+        console.log(`🗑️ Запит на видалення повідомлення: ${messageId}`);
         try {
+            // 1. Видаляємо з Firebase
             await db.collection('messages').doc(messageId).delete();
-            io.to(roomId).emit('message_deleted', messageId);
+            
+            // 2. Кажемо всім клієнтам видалити це повідомлення з екрану
+            io.emit('message_deleted', messageId);
         } catch (e) {
-            console.error("Delete error:", e);
+            console.error("Помилка видалення:", e);
         }
     });
 
-    // 🔥 5. MARK READ
+    // --- 6. 🔥 СТАТУС ПРОЧИТАНО ---
     socket.on('mark_read', async (data) => {
-        console.log(`👀 Mark read in room ${data.roomId}`);
-        io.to(data.roomId).emit('message_read_update', data);
+        // data = { messageId: "...", reader: "UserB" }
+        // Або можна просто відправляти сигнал "всі повідомлення прочитані цим користувачем"
+        
+        console.log(`👀 Хтось прочитав повідомлення`);
+        
+        // Тут можна оновити конкретне повідомлення в БД, 
+        // але для простоти поки просто скажемо всім: "Оновити статус"
+        io.emit('message_read_update', data); 
     });
+ 
 
-    // 🔥 6. ADD REACTION
-    socket.on('add_reaction', async ({ messageId, emoji, username, userId, roomId }) => {
-        try {
-            const messageRef = db.collection('messages').doc(messageId);
-            const messageDoc = await messageRef.get();
-            
-            if (!messageDoc.exists) return;
-            
-            const messageData = messageDoc.data();
-            const currentReactions = messageData.reactions || {};
-            
-            if (!currentReactions[emoji]) {
-                currentReactions[emoji] = [];
-            }
-            
-            const userIndex = currentReactions[emoji].indexOf(username);
-            if (userIndex === -1) {
-                currentReactions[emoji].push(username);
-            } else {
-                currentReactions[emoji].splice(userIndex, 1);
-                if (currentReactions[emoji].length === 0) {
-                    delete currentReactions[emoji];
-                }
-            }
-            
-            await messageRef.update({ reactions: currentReactions });
-            
-            io.to(roomId).emit('reaction_updated', {
-                messageId,
-                reactions: currentReactions
-            });
-        } catch (error) {
-            console.error("Reaction error:", error);
+    // --- 7. Додаємо реакції (НОВЕ) ---
+    socket.on('add_reaction', async ({ messageId, emoji, username }) => {
+    try {
+         const messageRef = db.collection('messages').doc(messageId);
+         const messageDoc = await messageRef.get();
+        
+          if (!messageDoc.exists) return;
+        
+         const messageData = messageDoc.data();
+         const currentReactions = messageData.reactions || {};
+        
+          if (!currentReactions[emoji]) {
+            currentReactions[emoji] = [];
         }
+        
+        const userIndex = currentReactions[emoji].indexOf(username);
+         if (userIndex === -1) {
+            // Додаємо реакцію
+            currentReactions[emoji].push(username);
+         } else {
+            // Видаляємо (toggle)
+            currentReactions[emoji].splice(userIndex, 1);
+            if (currentReactions[emoji].length === 0) {
+                delete currentReactions[emoji];
+            }
+        }
+        
+        await messageRef.update({ reactions: currentReactions });
+        
+        // 🔥 ВИПРАВЛЕНО: Відправляємо ВСІМ (не в кімнату)
+        io.emit('reaction_updated', {
+            messageId,
+            reactions: currentReactions
+        });
+     } catch (error) {
+        console.error("Помилка реакції:", error);
+    }
     });
 
-    // 🔥 7. EDIT MESSAGE
-    socket.on('edit_message', async ({ messageId, newText, username, userId, roomId }) => {
-        console.log(`✏️ Edit message: ${messageId}`);
+
+    // --- 8. 🔥 РЕДАГУВАННЯ ПОВІДОМЛЕНЬ ---
+    socket.on('edit_message', async ({ messageId, newText, username }) => {
+        console.log(`✏️ Редагування повідомлення: ${messageId}`);
         try {
             const messageRef = db.collection('messages').doc(messageId);
             const messageDoc = await messageRef.get();
@@ -479,77 +354,42 @@ io.on('connection', async (socket) => {
             
             const messageData = messageDoc.data();
             
-            if (messageData.senderId !== userId) {
+            // Перевірка: чи користувач є автором
+            if (messageData.sender !== username) {
                 socket.emit('error', { message: 'Ви не можете редагувати це повідомлення' });
                 return;
             }
             
+            // Оновлюємо
             await messageRef.update({
                 text: newText,
                 edited: true,
                 editedAt: admin.firestore.FieldValue.serverTimestamp()
             });
             
-            io.to(roomId).emit('message_edited', {
+            // Повідомляємо всіх
+            io.emit('message_edited', {
                 messageId,
                 newText,
                 edited: true
             });
             
-            console.log(`✅ Message edited`);
+            console.log(`✅ Повідомлення відредаговано`);
         } catch (error) {
-            console.error("Edit error:", error);
+            console.error("Помилка редагування:", error);
             socket.emit('error', { message: 'Помилка редагування' });
         }
     });
 
-    // 🔥 8. REGISTER FCM TOKEN
-    socket.on('register_token', async (data) => {
-        let token = "";
-        let userId = null;
 
-        if (typeof data === 'string') {
-            token = data;
-        } else if (typeof data === 'object' && data.token) {
-            token = data.token;
-            userId = data.userId;
-        }
-
-        if (token && userId) {
-            console.log(`💾 Saving FCM token for user ${userId}`);
-            try {
-                await db.collection('users').doc(userId).update({
-                    fcmToken: token,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                console.log(`✅ FCM token saved`);
-            } catch (e) {
-                console.error("❌ Error saving FCM token:", e);
-            }
-        }
-    });
-
-    // 🔥 9. DISCONNECT
-    socket.on('disconnect', async () => {
-        const userId = socketUsers.get(socket.id);
-        
-        if (userId) {
-            try {
-                await db.collection('users').doc(userId).update({
-                    online: false,
-                    lastSeen: admin.firestore.FieldValue.serverTimestamp()
-                });
-            } catch (e) {
-                console.error("Error updating offline status:", e);
-            }
-            
-            socketUsers.delete(socket.id);
-        }
-        
-        console.log(`[DISC] Socket відключився: ${socket.id}`);
+    socket.on('disconnect', () => {
+        console.log(`[DISC] Відключено: ${socket.id}`);
     });
 });
 
 server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
+
+// add function 'real ststus deliverey messege'
+//---BackUp

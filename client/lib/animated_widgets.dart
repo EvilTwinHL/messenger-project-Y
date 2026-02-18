@@ -9,7 +9,7 @@ import 'dart:async';
 class AnimatedMessageBubble extends StatefulWidget {
   final Widget child;
   final bool isMe;
-  
+
   const AnimatedMessageBubble({
     super.key,
     required this.child,
@@ -39,28 +39,18 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
     _slideAnimation = Tween<Offset>(
       begin: Offset(widget.isMe ? 0.2 : -0.2, 0),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     // Fade in
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.7),
-    ));
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: const Interval(0.0, 0.7)),
+    );
 
     // Легкий scale
     _scaleAnimation = Tween<double>(
       begin: 0.9,
       end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutBack,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
 
     _controller.forward();
   }
@@ -77,10 +67,7 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
       opacity: _fadeAnimation,
       child: SlideTransition(
         position: _slideAnimation,
-        child: ScaleTransition(
-          scale: _scaleAnimation,
-          child: widget.child,
-        ),
+        child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
       ),
     );
   }
@@ -89,7 +76,7 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
 /// 2. Індикатор "набирає..." з анімованими крапками
 class TypingIndicator extends StatefulWidget {
   final String username;
-  
+
   const TypingIndicator({super.key, required this.username});
 
   @override
@@ -99,7 +86,7 @@ class TypingIndicator extends StatefulWidget {
 class _TypingIndicatorState extends State<TypingIndicator>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  
+
   @override
   void initState() {
     super.initState();
@@ -183,7 +170,7 @@ class _TypingIndicatorState extends State<TypingIndicator>
 class SwipeableMessage extends StatefulWidget {
   final Widget child;
   final VoidCallback onReply;
-  
+
   const SwipeableMessage({
     super.key,
     required this.child,
@@ -198,7 +185,7 @@ class _SwipeableMessageState extends State<SwipeableMessage>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Offset> _animation;
-  
+
   double _dragExtent = 0;
   bool _dragUnderway = false;
 
@@ -213,10 +200,7 @@ class _SwipeableMessageState extends State<SwipeableMessage>
     _animation = Tween<Offset>(
       begin: Offset.zero,
       end: const Offset(0.15, 0),
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
   }
 
   @override
@@ -232,10 +216,10 @@ class _SwipeableMessageState extends State<SwipeableMessage>
 
   void _handleDragUpdate(DragUpdateDetails details) {
     if (!_dragUnderway) return;
-    
+
     final delta = details.primaryDelta! / context.size!.width;
     _dragExtent += delta;
-    
+
     if (_dragExtent > 0) {
       _controller.value = _dragExtent.clamp(0.0, 0.3);
     }
@@ -252,7 +236,7 @@ class _SwipeableMessageState extends State<SwipeableMessage>
     } else {
       _controller.animateTo(0);
     }
-    
+
     _dragExtent = 0;
   }
 
@@ -287,10 +271,7 @@ class _SwipeableMessageState extends State<SwipeableMessage>
             ),
           ),
           // Саме повідомлення
-          SlideTransition(
-            position: _animation,
-            child: widget.child,
-          ),
+          SlideTransition(position: _animation, child: widget.child),
         ],
       ),
     );
@@ -301,7 +282,7 @@ class _SwipeableMessageState extends State<SwipeableMessage>
 class PulseAnimation extends StatefulWidget {
   final Widget child;
   final bool isPulsing;
-  
+
   const PulseAnimation({
     super.key,
     required this.child,
@@ -328,10 +309,7 @@ class _PulseAnimationState extends State<PulseAnimation>
     _scaleAnimation = Tween<double>(
       begin: 1.0,
       end: 1.1,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
   }
 
   @override
@@ -350,10 +328,7 @@ class _PulseAnimationState extends State<PulseAnimation>
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: widget.child,
-    );
+    return ScaleTransition(scale: _scaleAnimation, child: widget.child);
   }
 }
 
@@ -361,7 +336,7 @@ class _PulseAnimationState extends State<PulseAnimation>
 class ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onPressed;
   final int unreadCount;
-  
+
   const ScrollToBottomButton({
     super.key,
     required this.onPressed,
@@ -374,10 +349,7 @@ class ScrollToBottomButton extends StatelessWidget {
       duration: const Duration(milliseconds: 300),
       tween: Tween(begin: 0.0, end: 1.0),
       builder: (context, value, child) {
-        return Transform.scale(
-          scale: value,
-          child: child,
-        );
+        return Transform.scale(scale: value, child: child);
       },
       child: GestureDetector(
         onTap: onPressed,
@@ -440,7 +412,7 @@ class ScrollToBottomButton extends StatelessWidget {
 /// 6. Date Separator з анімацією
 class DateSeparator extends StatelessWidget {
   final String date;
-  
+
   const DateSeparator({super.key, required this.date});
 
   @override
@@ -451,10 +423,7 @@ class DateSeparator extends StatelessWidget {
       builder: (context, value, child) {
         return Opacity(
           opacity: value,
-          child: Transform.scale(
-            scale: 0.8 + (value * 0.2),
-            child: child,
-          ),
+          child: Transform.scale(scale: 0.8 + (value * 0.2), child: child),
         );
       },
       child: Center(
@@ -464,10 +433,7 @@ class DateSeparator extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.1),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.1),
-              width: 1,
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
           ),
           child: Text(
             date,
@@ -554,7 +520,7 @@ class _MessageSkeletonState extends State<MessageSkeleton>
 /// 8. Reaction Picker (вибір емодзі для реакції)
 class ReactionPicker extends StatelessWidget {
   final Function(String) onReactionSelected;
-  
+
   const ReactionPicker({super.key, required this.onReactionSelected});
 
   static const reactions = ['❤️', '👍', '😂', '😮', '😢', '🙏', '🔥', '👏'];
@@ -566,10 +532,7 @@ class ReactionPicker extends StatelessWidget {
       tween: Tween(begin: 0.0, end: 1.0),
       curve: Curves.easeOutBack,
       builder: (context, value, child) {
-        return Transform.scale(
-          scale: value,
-          child: child,
-        );
+        return Transform.scale(scale: value, child: child);
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -585,10 +548,7 @@ class ReactionPicker extends StatelessWidget {
               onTap: () => onReactionSelected(emoji),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(
-                  emoji,
-                  style: const TextStyle(fontSize: 24),
-                ),
+                child: Text(emoji, style: const TextStyle(fontSize: 24)),
               ),
             );
           }).toList(),
@@ -597,3 +557,6 @@ class ReactionPicker extends StatelessWidget {
     );
   }
 }
+
+
+//---BackUp
