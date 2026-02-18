@@ -276,10 +276,10 @@ io.on('connection', async (socket) => {
         if (!chatId) return;
 
         try {
-            const messagesRef = db.collection('messages');
-            // 🔥 Фільтруємо повідомлення по chatId
+            // 🔥 ВИПРАВЛЕНО: Читаємо з підколекції 'messages' конкретного чату
+            const messagesRef = db.collection('chats').doc(chatId).collection('messages');
+            
             const snapshot = await messagesRef
-                .where('chatId', '==', chatId)
                 .orderBy('timestamp', 'desc')
                 .limit(50)
                 .get();
@@ -307,7 +307,7 @@ io.on('connection', async (socket) => {
         }
 
         const messageData = {
-            chatId: chatId, // 🔥 Прив'язка до кімнати
+            chatId: chatId, 
             text: text || '',
             sender: sender,
             senderAvatar: data.senderAvatar || null,
@@ -320,10 +320,10 @@ io.on('connection', async (socket) => {
             read: false
         };
 
-        // А) Зберігаємо повідомлення
-        const docRef = await db.collection('messages').add(messageData);
+        // А) 🔥 ВИПРАВЛЕНО: Зберігаємо в підколекцію 'messages' цього чату
+        const docRef = await db.collection('chats').doc(chatId).collection('messages').add(messageData);
         
-        // Б) 🔥 Оновлюємо `lastMessage` в самому чаті (для списку чатів)
+        // Б) Оновлюємо `lastMessage` в самому чаті (для списку чатів)
         await db.collection('chats').doc(chatId).update({
             lastMessage: {
                 text: type === 'image' ? '📷 Фото' : (type === 'voice' ? '🎤 Голосове' : text),
@@ -340,15 +340,14 @@ io.on('connection', async (socket) => {
             timestamp: new Date().toISOString()
         };
         
-        // Г) 🔥 Відправляємо ТІЛЬКИ в цю кімнату (chatId)
+        // Г) Відправляємо ТІЛЬКИ в цю кімнату (chatId)
         io.to(chatId).emit('receive_message', savedMessage); 
 
-        // Д) ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ (Спрощено)
-        // Примітка: Для ідеальної роботи треба брати токени participants з колекції 'chats'
+        // Д) ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ
         try {
             const tokensSnapshot = await db.collection('fcm_tokens').get();
             const tokens = tokensSnapshot.docs
-                .filter(doc => doc.data().username !== sender) // Всім, крім себе (поки що глобально, треба фільтрувати по учасниках чату)
+                .filter(doc => doc.data().username !== sender)
                 .map(doc => doc.id);
 
             if (tokens.length > 0) {
@@ -368,7 +367,6 @@ io.on('connection', async (socket) => {
 
     // --- 6. ІНДИКАТОР НАБОРУ (В КІМНАТУ) ---
     socket.on('typing', (data) => {
-        // data має містити { chatId, username }
         if (data.chatId) {
             socket.to(data.chatId).emit('display_typing', data);
         }
@@ -376,15 +374,12 @@ io.on('connection', async (socket) => {
 
     // --- 7. ВИДАЛЕННЯ ПОВІДОМЛЕННЯ (В КІМНАТУ) ---
     socket.on('delete_message', async ({ messageId, chatId }) => {
+        if (!chatId) return; // chatId обов'язковий
         try {
-            await db.collection('messages').doc(messageId).delete();
+            // 🔥 ВИПРАВЛЕНО: Видаляємо з підколекції
+            await db.collection('chats').doc(chatId).collection('messages').doc(messageId).delete();
             
-            // Якщо chatId передано, шлемо тільки в кімнату, інакше глобально (для сумісності)
-            if (chatId) {
-                io.to(chatId).emit('message_deleted', messageId);
-            } else {
-                io.emit('message_deleted', messageId);
-            }
+            io.to(chatId).emit('message_deleted', messageId);
         } catch (e) {
             console.error("Помилка видалення:", e);
         }
@@ -392,19 +387,18 @@ io.on('connection', async (socket) => {
 
     // --- 8. СТАТУС ПРОЧИТАНО (В КІМНАТУ) ---
     socket.on('mark_read', async (data) => {
-        // data = { messageId, chatId, reader }
         if (data.chatId) {
-            // Оновлюємо статус в БД (опціонально, тут просто шлемо івент)
+            // Можна додати оновлення в БД, але поки тільки сповіщення
             io.to(data.chatId).emit('message_read_update', data);
-        } else {
-             io.emit('message_read_update', data); // Fallback
         }
     });
 
     // --- 9. РЕАКЦІЇ (В КІМНАТУ) ---
     socket.on('add_reaction', async ({ messageId, emoji, username, chatId }) => {
+        if (!chatId) return;
         try {
-             const messageRef = db.collection('messages').doc(messageId);
+             // 🔥 ВИПРАВЛЕНО: Шукаємо повідомлення в підколекції
+             const messageRef = db.collection('chats').doc(chatId).collection('messages').doc(messageId);
              const messageDoc = await messageRef.get();
              if (!messageDoc.exists) return;
             
@@ -424,12 +418,8 @@ io.on('connection', async (socket) => {
              await messageRef.update({ reactions: currentReactions });
              
              const updateData = { messageId, reactions: currentReactions };
-
-             if (chatId) {
-                 io.to(chatId).emit('reaction_updated', updateData);
-             } else {
-                 io.emit('reaction_updated', updateData);
-             }
+             io.to(chatId).emit('reaction_updated', updateData);
+             
         } catch (error) {
             console.error("Помилка реакції:", error);
         }
@@ -437,8 +427,10 @@ io.on('connection', async (socket) => {
 
     // --- 10. РЕДАГУВАННЯ (В КІМНАТУ) ---
     socket.on('edit_message', async ({ messageId, newText, username, chatId }) => {
+        if (!chatId) return;
         try {
-            const messageRef = db.collection('messages').doc(messageId);
+            // 🔥 ВИПРАВЛЕНО: Шукаємо повідомлення в підколекції
+            const messageRef = db.collection('chats').doc(chatId).collection('messages').doc(messageId);
             const messageDoc = await messageRef.get();
             
             if (!messageDoc.exists) return;
@@ -451,12 +443,7 @@ io.on('connection', async (socket) => {
             });
             
             const updateData = { messageId, newText, edited: true };
-
-            if (chatId) {
-                io.to(chatId).emit('message_edited', updateData);
-            } else {
-                io.emit('message_edited', updateData);
-            }
+            io.to(chatId).emit('message_edited', updateData);
         } catch (error) {
             console.error("Помилка редагування:", error);
         }
