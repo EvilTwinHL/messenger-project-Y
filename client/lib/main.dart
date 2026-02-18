@@ -2093,3 +2093,117 @@ class _SwipeToReplyState extends State<SwipeToReply>
     );
   }
 }
+
+// =======================
+// 🗓️ DATE SEPARATOR (Added)
+// =======================
+class DateSeparator extends StatelessWidget {
+  final String date;
+  const DateSeparator({super.key, required this.date});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            date,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =======================
+// ⌨️ TYPING INDICATOR (Added)
+// =======================
+class TypingIndicator extends StatefulWidget {
+  final String username;
+  const TypingIndicator({super.key, required this.username});
+
+  @override
+  State<TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat();
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, bottom: 8),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 8,
+            backgroundColor: AppColors.mainColor,
+            child: Text(
+              widget.username.isNotEmpty
+                  ? widget.username[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(fontSize: 8, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2a2d3a),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildDot(0),
+                const SizedBox(width: 3),
+                _buildDot(0.2),
+                const SizedBox(width: 3),
+                _buildDot(0.4),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDot(double delay) {
+    return FadeTransition(
+      opacity: _animation,
+      child: Container(
+        width: 6,
+        height: 6,
+        decoration: const BoxDecoration(
+          color: Colors.white54,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+}
