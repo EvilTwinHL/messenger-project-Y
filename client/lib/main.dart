@@ -1282,7 +1282,7 @@ class _ChatScreenState extends State<ChatScreen> {
         preferredSize: const Size.fromHeight(60),
         child: GlassBox(
           blur: 15,
-          opacity: 0.1,
+          opacity: 1.0,
           child: AppBar(
             backgroundColor: Colors.black.withValues(alpha: 0.3),
             elevation: 0,
