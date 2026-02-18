@@ -2,7 +2,7 @@ name: my_messenger_app
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 2.0.0+1
+version: 1.0.55+1
 
 environment:
   sdk: ^3.10.8
@@ -24,12 +24,8 @@ dependencies:
   audioplayers: ^6.5.1
   path_provider: ^2.1.1
   permission_handler: ^12.0.1
-  file_picker: ^8.1.7
-  geolocator: ^13.0.2
-  url_launcher: ^6.3.1
-  firebase_auth: ^6.0.0
-  google_sign_in: ^6.2.2
-  cloud_firestore: ^6.1.2
+  
+  
 
 
 
