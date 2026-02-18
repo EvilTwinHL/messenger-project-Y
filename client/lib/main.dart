@@ -1284,7 +1284,12 @@ class _ChatScreenState extends State<ChatScreen> {
           blur: 15,
           opacity: 1.0,
           child: AppBar(
-            backgroundColor: Colors.black.withValues(alpha: 0.3),
+            backgroundColor: const Color.fromARGB(
+              255,
+              36,
+              36,
+              36,
+            ).withValues(alpha: 1.0),
             elevation: 0,
             centerTitle: true,
             title: Column(
