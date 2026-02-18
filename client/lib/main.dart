@@ -1826,14 +1826,17 @@ class MessageBubble extends StatelessWidget {
           ),
         ),
         if (reactions != null && reactions!.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: -13, left: 8, right: 8),
-            child: ReactionsDisplay(
-              reactions: reactions,
-              currentUsername: currentUsername,
-              onReactionTap: (emoji) {
-                if (onReactionTap != null) onReactionTap!(messageId, emoji);
-              },
+          Transform.translate(
+            offset: const Offset(0, -10),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8, right: 8),
+              child: ReactionsDisplay(
+                reactions: reactions,
+                currentUsername: currentUsername,
+                onReactionTap: (emoji) {
+                  if (onReactionTap != null) onReactionTap!(messageId, emoji);
+                },
+              ),
             ),
           ),
       ],
