@@ -12,13 +12,14 @@ import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'animated_widgets.dart';
 import 'package:vibration/vibration.dart';
-import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart'; // 🔥 Прямий запис без окремого VoiceRecorder
+import 'package:record/record.dart';
 import 'audio_player_widget.dart';
+import 'home_screen.dart';
 
 // ==========================================
 // 🎨 НАЛАШТУВАННЯ КОЛЬОРІВ ТА СЕРВЕРА
@@ -70,7 +71,7 @@ void main() async {
   runApp(
     MyApp(
       initialScreen: savedUsername != null
-          ? ChatScreen(username: savedUsername, avatarUrl: savedAvatar)
+          ? HomeScreen(myUsername: savedUsername, myAvatarUrl: savedAvatar)
           : const LoginScreen(),
     ),
   );
@@ -127,7 +128,10 @@ class GlassBox extends StatelessWidget {
             borderRadius: BorderRadius.circular(borderRadius),
             border:
                 border ??
-                Border.all(color: Colors.white.withOpacity(0.1), width: 0.3),
+                Border.all(
+                  color: const Color.fromARGB(255, 0, 0, 0).withOpacity(0.1),
+                  width: 0.3,
+                ),
           ),
           child: child,
         ),
@@ -206,7 +210,7 @@ class _LoginScreenState extends State<LoginScreen> {
           context,
           MaterialPageRoute(
             builder: (context) =>
-                ChatScreen(username: username, avatarUrl: finalAvatarUrl),
+                HomeScreen(myUsername: username, myAvatarUrl: finalAvatarUrl),
           ),
         );
       } else {
@@ -330,19 +334,27 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // =======================
-// 💬 ЕКРАН ЧАТУ З REPLY
+// 💬 ЕКРАН ЧАТУ (Оновлений на StreamBuilder)
 // =======================
 class ChatScreen extends StatefulWidget {
   final String username;
   final String? avatarUrl;
-  const ChatScreen({super.key, required this.username, this.avatarUrl});
+  final String chatId; // 🔥 ID Кімнати
+  final String otherUsername; // 🔥 Ім'я співрозмовника
+
+  const ChatScreen({
+    super.key,
+    required this.username,
+    required this.chatId,
+    required this.otherUsername,
+    this.avatarUrl,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  List<Map<String, dynamic>> messages = [];
   final TextEditingController textController = TextEditingController();
   late IO.Socket socket;
   final ScrollController _scrollController = ScrollController();
@@ -350,26 +362,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final _updater = ShorebirdUpdater();
   bool _isUpdateAvailable = false;
-  // int? _currentPatch; // 🔥 ВИДАЛЕНО: не використовується
 
   late String myName;
   bool _isTyping = false;
   String? _typingUser;
   Timer? _typingTimer;
 
-  List<String> _onlineUsers = [];
-
-  // 🔥 НОВИЙ КОД: Reply змінні
+  // Reply змінні
   String? _replyToMessageId;
   String? _replyToText;
   String? _replyToSender;
 
-  // 🔥 Edit змінні
+  // Edit змінні
   String? _editingMessageId;
   String? _editingOriginalText;
   bool _isEditing = false;
 
-  // 🔥 Voice recording (hold-to-record)
+  // Voice recording
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   bool _showVoiceConfirm = false;
@@ -377,7 +386,6 @@ class _ChatScreenState extends State<ChatScreen> {
   int _recordedDuration = 0;
   Timer? _recordingTimer;
 
-  // 🔥 Input bar стан
   bool _hasText = false;
 
   @override
@@ -389,7 +397,6 @@ class _ChatScreenState extends State<ChatScreen> {
       Future.delayed(const Duration(seconds: 2), setupPushNotifications);
     }
     _checkShorebirdSilent();
-    // 🔥 Слухаємо зміни тексту для анімації кнопок
     textController.addListener(() {
       final hasText = textController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
@@ -401,11 +408,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _checkShorebirdSilent() async {
     try {
       if (!_updater.isAvailable) return;
-      // final patch = await _updater.readCurrentPatch(); // 🔥 ВИДАЛЕНО
       final status = await _updater.checkForUpdate();
-      setState(() {
-        _isUpdateAvailable = status == UpdateStatus.outdated;
-      });
+      if (mounted) {
+        setState(() {
+          _isUpdateAvailable = status == UpdateStatus.outdated;
+        });
+      }
     } catch (e) {
       _logToServer("Shorebird error: $e");
     }
@@ -493,29 +501,18 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await messaging.requestPermission();
       String? token = await messaging.getToken();
-      if (token != null) {
+      if (token != null && socket.connected) {
         socket.emit('register_token', {
           'token': token,
           'username': widget.username,
         });
       }
-
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         print("📱 Push received: ${message.notification?.title}");
       });
     } catch (e) {
       _logToServer("Push Error: $e");
     }
-  }
-
-  Future<void> _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
   }
 
   void initSocket() {
@@ -530,36 +527,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     socket.onConnect((_) {
       print('✅ Connected to server');
-      socket.emit('user_online', myName);
-    });
-
-    socket.on('load_history', (data) {
-      if (data != null) {
-        setState(() {
-          messages.clear();
-          for (var msg in data) messages.add(msg);
-        });
-        _scrollToBottom();
-        bool hasOtherMessages = messages.any((msg) => msg['sender'] != myName);
-        if (hasOtherMessages) socket.emit('mark_read', {'reader': myName});
-      }
-    });
-
-    socket.on('receive_message', (data) {
-      setState(() => messages.add(data));
-      _scrollToBottom();
-      if (data['sender'] != myName)
-        socket.emit('mark_read', {'reader': myName});
-    });
-
-    socket.on('message_read_update', (data) {
-      if (mounted) {
-        setState(() {
-          for (var msg in messages) {
-            if (msg['sender'] == myName) msg['read'] = true;
-          }
-        });
-      }
+      // 🔥 ВХІД В КІМНАТУ
+      socket.emit('join_chat', widget.chatId);
     });
 
     socket.on('display_typing', (data) {
@@ -568,66 +537,10 @@ class _ChatScreenState extends State<ChatScreen> {
           _isTyping = true;
           _typingUser = data['username'];
         });
-        _scrollToBottom();
         _typingTimer?.cancel();
         _typingTimer = Timer(const Duration(seconds: 3), () {
           if (mounted) setState(() => _isTyping = false);
         });
-      }
-    });
-
-    socket.on('message_deleted', (messageId) {
-      if (mounted && messageId != null) {
-        setState(() => messages.removeWhere((msg) => msg['id'] == messageId));
-      }
-    });
-
-    socket.on('online_users', (data) {
-      if (mounted) {
-        setState(() {
-          _onlineUsers = List<String>.from(data);
-        });
-      }
-    });
-
-    // 🔥 НОВИЙ КОД: Слухаємо оновлення реакцій
-    socket.on('reaction_updated', (data) {
-      if (mounted) {
-        setState(() {
-          final messageIndex = messages.indexWhere(
-            (msg) => msg['id'] == data['messageId'],
-          );
-          if (messageIndex != -1) {
-            messages[messageIndex]['reactions'] = data['reactions'];
-          }
-        });
-      }
-    });
-
-    // 🔥 НОВИЙ КОД: Слухач для відредагованих повідомлень
-    socket.on('message_edited', (data) {
-      if (mounted) {
-        setState(() {
-          final messageIndex = messages.indexWhere(
-            (msg) => msg['id'] == data['messageId'],
-          );
-          if (messageIndex != -1) {
-            messages[messageIndex]['text'] = data['newText'];
-            messages[messageIndex]['edited'] = true;
-          }
-        });
-      }
-    });
-  }
-
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
       }
     });
   }
@@ -651,15 +564,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // 🔥 НОВИЙ КОД: Reply функції
   void _setReplyTo(Map message) {
     setState(() {
       _replyToMessageId = message['id'];
       _replyToText = message['type'] == 'image' ? '📷 Фото' : message['text'];
       _replyToSender = message['sender'];
     });
-    // Прокручуємо до reply preview
-    _scrollToBottom();
   }
 
   void _cancelReply() {
@@ -670,7 +580,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // 🔥 НОВИЙ КОД: Функції для редагування
   void _startEditingMessage(Map message) {
     setState(() {
       _editingMessageId = message['id'];
@@ -678,8 +587,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _isEditing = true;
       textController.text = message['text'];
     });
-    // Прокручуємо вниз і фокусуємо поле
-    _scrollToBottom();
   }
 
   void _cancelEditing() {
@@ -698,17 +605,18 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    socket.emit('edit_message', {
-      'messageId': _editingMessageId,
-      'newText': newText,
-      'username': myName,
-    });
+    if (socket.connected) {
+      socket.emit('edit_message', {
+        'messageId': _editingMessageId,
+        'newText': newText,
+        'username': myName,
+        'chatId': widget.chatId,
+      });
+    }
 
     _cancelEditing();
   }
 
-  // 🔥 НОВИЙ КОД: Voice recording функції
-  // 🔥 HOLD-TO-RECORD: Починаємо запис при затисканні
   Future<void> _onMicPressStart() async {
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
@@ -737,7 +645,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (mounted) {
         setState(() => _isRecording = true);
-        _scrollToBottom();
       }
 
       _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -748,10 +655,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // 🔥 HOLD-TO-RECORD: Зупиняємо і показуємо підтвердження
   Future<void> _onMicPressEnd() async {
     if (!_isRecording) return;
-
     _recordingTimer?.cancel();
     final path = await _audioRecorder.stop();
 
@@ -770,11 +675,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _recordedFilePath = null;
         }
       });
-      _scrollToBottom();
     }
   }
 
-  // 🔥 Відправляємо підтверджений голосовий запис
   Future<void> _confirmSendVoice() async {
     if (_recordedFilePath == null) return;
     final path = _recordedFilePath!;
@@ -804,15 +707,9 @@ class _ChatScreenState extends State<ChatScreen> {
       await file.delete();
     } catch (e) {
       print('Помилка відправки голосового: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Помилка відправки голосового')),
-        );
-      }
     }
   }
 
-  // 🔥 Скасовуємо голосовий запис
   void _cancelVoice() {
     if (_recordedFilePath != null) {
       try {
@@ -827,39 +724,40 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // 🔥 НОВИЙ КОД: Функція для додавання реакції
   void _addReaction(String messageId, String emoji) {
-    socket.emit('add_reaction', {
-      'messageId': messageId,
-      'emoji': emoji,
-      'username': myName,
-    });
+    if (socket.connected) {
+      socket.emit('add_reaction', {
+        'messageId': messageId,
+        'emoji': emoji,
+        'username': myName,
+        'chatId': widget.chatId,
+      });
+    }
   }
 
   void sendMessage({
     String? imageUrl,
-    String? audioUrl, // 🔥 НОВИЙ
-    int? audioDuration, // 🔥 НОВИЙ
+    String? audioUrl,
+    int? audioDuration,
     String type = 'text',
   }) {
     String text = textController.text.trim();
     if (text.isEmpty && imageUrl == null && audioUrl == null) return;
 
-    // 🔥 НОВИЙ КОД: Якщо редагуємо - зберігаємо зміни
     if (_isEditing) {
       _saveEditedMessage();
       return;
     }
 
-    // 🔥 ВИПРАВЛЕНО: Додаємо всі поля одразу при ініціалізації
     final messageData = {
+      'chatId': widget.chatId, // 🔥 ОБОВ'ЯЗКОВО
       'text': imageUrl ?? audioUrl ?? text,
       'sender': myName,
       'senderAvatar': widget.avatarUrl,
       'type': type,
-      if (audioUrl != null) 'audioUrl': audioUrl, // 🔥 НОВИЙ
-      if (audioDuration != null) 'audioDuration': audioDuration, // 🔥 НОВИЙ
-      // Додаємо replyTo відразу (буде null якщо немає reply)
+      'timestamp': DateTime.now().toIso8601String(),
+      if (audioUrl != null) 'audioUrl': audioUrl,
+      if (audioDuration != null) 'audioDuration': audioDuration,
       if (_replyToMessageId != null)
         'replyTo': {
           'id': _replyToMessageId,
@@ -868,17 +766,15 @@ class _ChatScreenState extends State<ChatScreen> {
         },
     };
 
-    socket.emit('send_message', messageData);
+    if (socket.connected) {
+      socket.emit('send_message', messageData);
+    }
     textController.clear();
-
-    // Скидаємо reply
     _cancelReply();
   }
 
-  // 🔥 НОВИЙ КОД: Reply preview widget
   Widget _buildReplyPreview() {
     if (_replyToMessageId == null) return const SizedBox.shrink();
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8),
@@ -905,10 +801,10 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Text(
                   _replyToSender ?? '',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 14,
                     color: AppColors.mainColor,
-                    fontWeight: FontWeight.bold, //FontWeight.w600,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -930,10 +826,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // 🔥 НОВИЙ КОД: Editing header widget
   Widget _buildEditingHeader() {
     if (!_isEditing) return const SizedBox.shrink();
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8),
@@ -944,14 +838,14 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Row(
         children: [
-          Icon(Icons.edit, color: AppColors.white, size: 20),
+          const Icon(Icons.edit, color: AppColors.white, size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
+                const Text(
                   'Редагування повідомлення',
                   style: TextStyle(
                     fontSize: 14,
@@ -993,7 +887,6 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // ── 1. Реакції (окрема плаваюча капсула) ──
                 Container(
                   margin: const EdgeInsets.only(bottom: 10),
                   padding: const EdgeInsets.symmetric(
@@ -1011,8 +904,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       ...['❤️', '👍', '👎', '😂', '😮', '😢'].map(
                         (emoji) => GestureDetector(
                           onTap: () {
+                            Navigator.of(ctx).pop();
                             _addReaction(message['id'], emoji);
-                            Navigator.pop(ctx);
                           },
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1023,19 +916,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
-                      // Кнопка "більше"
                       GestureDetector(
                         onTap: () {
-                          Navigator.pop(ctx);
-                          // Показуємо повний picker через showDialog
+                          Navigator.of(ctx).pop();
                           showDialog(
                             context: context,
                             builder: (_) => AlertDialog(
                               backgroundColor: const Color(0xFF2a2d3a),
-                              contentPadding: const EdgeInsets.all(12),
                               content: ReactionPicker(
                                 onReactionSelected: (emoji) {
-                                  Navigator.pop(context);
+                                  Navigator.of(context).pop();
                                   _addReaction(message['id'], emoji);
                                 },
                               ),
@@ -1058,8 +948,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-
-                // ── 2. Меню дій ──
                 Container(
                   decoration: BoxDecoration(
                     color: const Color(0xFF2a2d3a),
@@ -1074,27 +962,12 @@ class _ChatScreenState extends State<ChatScreen> {
                         icon: Icons.reply_outlined,
                         label: 'Відповісти',
                         onTap: () {
-                          Navigator.pop(ctx);
+                          Navigator.of(ctx).pop();
                           _setReplyTo(message);
                         },
                       ),
                       _menuDivider(),
-                      _menuItem(
-                        ctx,
-                        icon: Icons.forward_outlined,
-                        label: 'Переслати',
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Незабаром!'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
-                      ),
                       if (isText) ...[
-                        _menuDivider(),
                         _menuItem(
                           ctx,
                           icon: Icons.copy_outlined,
@@ -1103,60 +976,30 @@ class _ChatScreenState extends State<ChatScreen> {
                             Clipboard.setData(
                               ClipboardData(text: message['text'] ?? ''),
                             );
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Скопійовано'),
-                                duration: Duration(seconds: 1),
-                              ),
-                            );
+                            Navigator.of(ctx).pop();
                           },
                         ),
-                      ],
-                      _menuDivider(),
-                      _menuItem(
-                        ctx,
-                        icon: Icons.info_outline,
-                        label: 'Інфо',
-                        onTap: () {
-                          Navigator.pop(ctx);
-                        },
-                      ),
-                      _menuDivider(),
-                      _menuItem(
-                        ctx,
-                        icon: Icons.push_pin_outlined,
-                        label: 'Закріпити',
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Незабаром!'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
-                      ),
-                      if (isMe && isText) ...[
                         _menuDivider(),
+                      ],
+                      if (isMe && isText) ...[
                         _menuItem(
                           ctx,
                           icon: Icons.edit_outlined,
                           label: 'Редагувати',
                           onTap: () {
-                            Navigator.pop(ctx);
+                            Navigator.of(ctx).pop();
                             _startEditingMessage(message);
                           },
                         ),
+                        _menuDivider(),
                       ],
-                      _menuDivider(),
                       _menuItem(
                         ctx,
                         icon: Icons.delete_outline,
                         label: 'Видалити',
                         color: Colors.redAccent,
                         onTap: () {
-                          Navigator.pop(ctx);
+                          Navigator.of(ctx).pop();
                           _showDeleteConfirmDialog(message['id']);
                         },
                       ),
@@ -1171,7 +1014,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Елемент меню
   Widget _menuItem(
     BuildContext ctx, {
     required IconData icon,
@@ -1188,14 +1030,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(width: 16),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 16,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
+            Text(label, style: TextStyle(color: color, fontSize: 16)),
           ],
         ),
       ),
@@ -1222,7 +1057,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           TextButton(
             onPressed: () {
-              socket.emit('delete_message', messageId);
+              if (socket.connected) {
+                socket.emit('delete_message', {
+                  'messageId': messageId,
+                  'chatId': widget.chatId,
+                });
+              }
               Navigator.pop(ctx);
             },
             child: const Text(
@@ -1238,6 +1078,7 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime _parseDate(dynamic timestamp) {
     if (timestamp == null) return DateTime.now();
     try {
+      if (timestamp is Timestamp) return timestamp.toDate();
       if (timestamp is String) return DateTime.parse(timestamp);
       if (timestamp is Map && timestamp['_seconds'] != null) {
         return DateTime.fromMillisecondsSinceEpoch(
@@ -1250,16 +1091,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _isSameDay(DateTime d1, DateTime d2) =>
       d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
-
   String _getDateLabel(DateTime date) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final yesterday = today.subtract(const Duration(days: 1));
     final messageDate = DateTime(date.year, date.month, date.day);
-
     if (messageDate == today) return "Сьогодні";
     if (messageDate == yesterday) return "Вчора";
-
     return "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
   }
 
@@ -1295,16 +1133,9 @@ class _ChatScreenState extends State<ChatScreen> {
             title: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  "Chat",
-                  style: TextStyle(fontSize: 17, color: Colors.white),
-                ),
                 Text(
-                  '${_onlineUsers.length} онлайн',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white.withOpacity(0.6),
-                  ),
+                  widget.otherUsername,
+                  style: const TextStyle(fontSize: 17, color: Colors.white),
                 ),
               ],
             ),
@@ -1317,10 +1148,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       : Colors.white70,
                 ),
                 onPressed: _manualCheckForUpdate,
-              ),
-              IconButton(
-                icon: const Icon(Icons.exit_to_app),
-                onPressed: _logout,
               ),
             ],
           ),
@@ -1341,92 +1168,114 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: EdgeInsets.only(
-                  left: 16,
-                  right: 16,
-                  top: 100,
-                  bottom:
-                      160 +
-                      MediaQuery.of(context).padding.bottom +
-                      (_replyToMessageId != null ? 60 : 0) +
-                      (_isEditing ? 60 : 0) +
-                      (_isRecording ? 55 : 0) +
-                      (_showVoiceConfirm ? 70 : 0),
-                ),
-                itemCount:
-                    messages.length +
-                    (_isTyping && _typingUser != null ? 1 : 0),
-                itemBuilder: (context, index) {
-                  final totalMessages = messages.length;
-                  final hasTyping = _isTyping && _typingUser != null;
-
-                  // Typing indicator
-                  if (hasTyping && index == totalMessages) {
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: TypingIndicator(username: _typingUser!),
-                    );
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('chats')
+                    .doc(widget.chatId)
+                    .collection('messages')
+                    .orderBy('timestamp', descending: true)
+                    .limit(50) // 🔥 ВАЖЛИВО: Ліміт, щоб не зависало
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
                   }
 
-                  final msg = messages[index];
-                  final isMe = msg['sender'] == myName;
+                  final docs = snapshot.data!.docs;
+                  final messages = docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    data['id'] = doc.id;
+                    return data;
+                  }).toList();
 
-                  bool showDateSeparator = false;
-                  if (index == 0) {
-                    showDateSeparator = true;
-                  } else {
-                    final currentDate = _parseDate(msg['timestamp']);
-                    final prevDate = _parseDate(
-                      messages[index - 1]['timestamp'],
-                    );
-                    showDateSeparator = !_isSameDay(currentDate, prevDate);
-                  }
-                  final dateLabel = _getDateLabel(_parseDate(msg['timestamp']));
+                  return ListView.builder(
+                    controller: _scrollController,
+                    reverse: true,
+                    padding: EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: 100,
+                      bottom:
+                          160 +
+                          MediaQuery.of(context).padding.bottom +
+                          (_replyToMessageId != null ? 60 : 0) +
+                          (_isEditing ? 60 : 0) +
+                          (_isRecording ? 55 : 0) +
+                          (_showVoiceConfirm ? 70 : 0),
+                    ),
+                    itemCount:
+                        messages.length +
+                        (_isTyping && _typingUser != null ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      final hasTyping = _isTyping && _typingUser != null;
 
-                  return Column(
-                    children: [
-                      if (showDateSeparator) DateSeparator(date: dateLabel),
-                      SwipeToReply(
-                        onReply: () => _setReplyTo(msg),
-                        replyIconColor: Colors.white,
-                        child: GestureDetector(
-                          onLongPress: () => _showContextMenu(context, msg),
-                          child: AnimatedMessageBubble(
-                            isMe: isMe,
-                            child: MessageBubble(
-                              text:
-                                  msg['type'] == 'image' ||
-                                      msg['type'] == 'voice'
-                                  ? ''
-                                  : (msg['text'] ?? ''),
-                              imageUrl: msg['type'] == 'image'
-                                  ? msg['text']
-                                  : null,
-                              audioUrl: msg['audioUrl'],
-                              audioDuration: msg['audioDuration'],
-                              sender: msg['sender'] ?? 'Anon',
-                              isMe: isMe,
-                              timestamp: msg['timestamp'],
-                              isRead: msg['read'] == true,
-                              replyTo: msg['replyTo'],
-                              reactions: msg['reactions'],
-                              messageId: msg['id'],
-                              currentUsername: myName,
-                              onReactionTap: _addReaction,
-                              edited: msg['edited'] == true,
+                      if (hasTyping && index == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: TypingIndicator(username: _typingUser!),
+                        );
+                      }
+
+                      final msgIndex = hasTyping ? index - 1 : index;
+                      final msg = messages[msgIndex];
+                      final isMe = msg['sender'] == myName;
+
+                      bool showDateSeparator = false;
+                      if (msgIndex == messages.length - 1) {
+                        showDateSeparator = true;
+                      } else {
+                        final currentDate = _parseDate(msg['timestamp']);
+                        final prevDate = _parseDate(
+                          messages[msgIndex + 1]['timestamp'],
+                        );
+                        showDateSeparator = !_isSameDay(currentDate, prevDate);
+                      }
+                      final dateLabel = _getDateLabel(
+                        _parseDate(msg['timestamp']),
+                      );
+
+                      return Column(
+                        children: [
+                          if (showDateSeparator) DateSeparator(date: dateLabel),
+                          SwipeToReply(
+                            onReply: () => _setReplyTo(msg),
+                            replyIconColor: Colors.white,
+                            child: GestureDetector(
+                              onLongPress: () => _showContextMenu(context, msg),
+                              child: AnimatedMessageBubble(
+                                isMe: isMe,
+                                child: MessageBubble(
+                                  text:
+                                      msg['type'] == 'image' ||
+                                          msg['type'] == 'voice'
+                                      ? ''
+                                      : (msg['text'] ?? ''),
+                                  imageUrl: msg['type'] == 'image'
+                                      ? msg['text']
+                                      : null,
+                                  audioUrl: msg['audioUrl'],
+                                  audioDuration: msg['audioDuration'],
+                                  sender: msg['sender'] ?? 'Anon',
+                                  isMe: isMe,
+                                  timestamp: msg['timestamp'],
+                                  isRead: msg['read'] == true,
+                                  replyTo: msg['replyTo'],
+                                  reactions: msg['reactions'],
+                                  messageId: msg['id'],
+                                  currentUsername: myName,
+                                  onReactionTap: _addReaction,
+                                  edited: msg['edited'] == true,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   );
                 },
               ),
             ),
-
-            // 🔥 НОВА АРХІТЕКТУРА: Всі панелі + input bar знизу
             Positioned(bottom: 0, left: 0, right: 0, child: _buildBottomArea()),
           ],
         ),
@@ -1434,9 +1283,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ======================================
-  // 🔥 НОВИЙ BOTTOM AREA
-  // ======================================
   Widget _buildBottomArea() {
     final safeBottom = MediaQuery.of(context).padding.bottom;
     final hasPanel =
@@ -1459,7 +1305,6 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Panels (reply, edit, recording, confirm)
           if (hasPanel)
             Container(
               margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
@@ -1473,13 +1318,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-
-          // Input row
           Padding(
             padding: EdgeInsets.fromLTRB(10, 6, 10, 8 + safeBottom),
             child: Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.center, // ← center замість end
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 _buildLeftAnimatedButton(),
                 const SizedBox(width: 6),
@@ -1494,7 +1336,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Активний запис (під час тримання кнопки)
   Widget _buildActiveRecordingPanel() {
     String _fmt(int s) =>
         '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
@@ -1537,7 +1378,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Підтвердження надсилання голосового
   Widget _buildVoiceConfirmPanel() {
     String _fmt(int s) =>
         '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
@@ -1573,7 +1413,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-          // Скасувати
           GestureDetector(
             onTap: _cancelVoice,
             child: Container(
@@ -1593,7 +1432,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          // Надіслати
           GestureDetector(
             onTap: _confirmSendVoice,
             child: Container(
@@ -1617,25 +1455,22 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // 🔥 Текстове поле з кнопками mic/video/plus всередині (suffix)
   Widget _buildTextFieldWithIcons() {
     return GlassBox(
       borderRadius: 24,
       opacity: 0.15,
       blur: 20,
-      border: Border.all(color: Colors.white12),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.center, // ← центрування по вертикалі
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: TextField(
               controller: textController,
               onChanged: (text) {
-                if (text.isNotEmpty) {
+                if (text.isNotEmpty && socket.connected) {
                   socket.emit('typing', {
                     'username': myName,
-                    'roomId': 'general',
+                    'chatId': widget.chatId,
                   });
                 }
               },
@@ -1649,12 +1484,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 contentPadding: EdgeInsets.symmetric(
                   horizontal: 14,
                   vertical: 8,
-                ), // ← менше по вертикалі
-                isDense: true, // ← ще компактніше
+                ),
+                isDense: true,
               ),
             ),
           ),
-          // Іконки праворуч всередині поля
           Padding(
             padding: const EdgeInsets.only(right: 6),
             child: AnimatedSwitcher(
@@ -1662,14 +1496,12 @@ class _ChatScreenState extends State<ChatScreen> {
               transitionBuilder: (child, anim) =>
                   ScaleTransition(scale: anim, child: child),
               child: _hasText
-                  // Є текст → іконка "прикріпити"
                   ? _buildInlineIcon(
                       key: const ValueKey('plus'),
-                      icon: Icons.add_circle_outline, // ← кругла іконка +
+                      icon: Icons.add_circle_outline,
                       onTap: _pickAndUploadImage,
                       color: Colors.white54,
                     )
-                  // Без тексту → мікрофон + відео
                   : Row(
                       key: const ValueKey('mic-video'),
                       mainAxisSize: MainAxisSize.min,
@@ -1702,7 +1534,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Компактна іконка без padding-зайвого
   Widget _buildInlineIconRaw({
     required IconData icon,
     Color color = Colors.white54,
@@ -1733,7 +1564,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // 🔥 Права кнопка: attach (без тексту) → send (з текстом), анімована
   Widget _buildRightAnimatedButton() {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
@@ -1745,19 +1575,18 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: _isEditing ? Icons.check : Icons.arrow_upward,
               onPressed: sendMessage,
               color: AppColors.mainColor,
-              size: 32, // ← 36 → 32
+              size: 32,
             )
           : _buildCircleButton(
               key: const ValueKey('attach'),
               icon: Icons.attach_file,
               onPressed: _pickAndUploadImage,
               color: AppColors.mainColor,
-              size: 32, // ← 36 → 32
+              size: 32,
             ),
     );
   }
 
-  // 🔥 Ліва кнопка не потрібна → прибираємо (можна прибрати з Row)
   Widget _buildLeftAnimatedButton() => const SizedBox.shrink();
 
   Widget _buildCircleButton({
@@ -1780,40 +1609,21 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  // Зберігаємо для сумісності
-  Widget _buildFloatingButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return _buildCircleButton(
-      key: ValueKey(icon),
-      icon: icon,
-      onPressed: onPressed,
-      color: AppColors.mainColor,
-    );
-  }
 }
 
 // =======================
-// 🔥 НОВИЙ КОД: ReplyPreview Widget
+// 🔥 ReplyPreview Widget
 // =======================
 class ReplyPreview extends StatelessWidget {
   final Map? replyTo;
   final VoidCallback? onTap;
-  final bool isMe; // 🔥 НОВИЙ: для вибору кольору лінії
+  final bool isMe;
 
-  const ReplyPreview({
-    super.key,
-    this.replyTo,
-    this.onTap,
-    this.isMe = false, // 🔥 НОВИЙ
-  });
+  const ReplyPreview({super.key, this.replyTo, this.onTap, this.isMe = false});
 
   @override
   Widget build(BuildContext context) {
     if (replyTo == null) return const SizedBox.shrink();
-
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -1823,7 +1633,6 @@ class ReplyPreview extends StatelessWidget {
           color: Colors.black.withOpacity(0.2),
           borderRadius: BorderRadius.circular(8),
           border: Border(
-            // 🔥 ЗМІНЕНО: біла лінія для своїх, синя для чужих (як в Signal)
             left: BorderSide(
               color: isMe ? Colors.white : AppColors.mainColor,
               width: 3,
@@ -1838,7 +1647,7 @@ class ReplyPreview extends StatelessWidget {
               replyTo!['sender'] ?? '',
               style: TextStyle(
                 fontSize: 14,
-                color: AppColors.white, //mainColor,
+                color: AppColors.white,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1866,8 +1675,8 @@ class MessageBubble extends StatelessWidget {
   final String text;
   final String sender;
   final String? imageUrl;
-  final String? audioUrl; // 🔥 НОВИЙ
-  final int? audioDuration; // 🔥 НОВИЙ
+  final String? audioUrl;
+  final int? audioDuration;
   final bool isMe;
   final dynamic timestamp;
   final String? avatarUrl;
@@ -1885,8 +1694,8 @@ class MessageBubble extends StatelessWidget {
     required this.sender,
     required this.isMe,
     this.imageUrl,
-    this.audioUrl, // 🔥 НОВИЙ
-    this.audioDuration, // 🔥 НОВИЙ
+    this.audioUrl,
+    this.audioDuration,
     this.timestamp,
     this.avatarUrl,
     this.isRead = false,
@@ -1901,13 +1710,11 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final timeText = _formatTime(timestamp);
-
     return Column(
       crossAxisAlignment: isMe
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
       children: [
-        // Саме повідомлення
         Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -1935,7 +1742,6 @@ class MessageBubble extends StatelessWidget {
               border: isMe
                   ? null
                   : Border.all(color: Colors.white.withOpacity(0.1)),
-              // 🔥 ВИДАЛЕНО boxShadow
             ),
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -1954,17 +1760,8 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-
-                  // 🔥 НОВИЙ КОД: Показуємо reply preview
                   if (replyTo != null)
-                    ReplyPreview(
-                      replyTo: replyTo,
-                      isMe: isMe, // 🔥 ПЕРЕДАЄМО isMe
-                      onTap: () {
-                        print('Scroll to message: ${replyTo!['id']}');
-                      },
-                    ),
-
+                    ReplyPreview(replyTo: replyTo, isMe: isMe, onTap: () {}),
                   if (imageUrl != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -1973,15 +1770,12 @@ class MessageBubble extends StatelessWidget {
                         child: Image.network(imageUrl!, fit: BoxFit.cover),
                       ),
                     ),
-
-                  // 🔥 НОВИЙ КОД: Voice message player
                   if (audioUrl != null)
                     AudioMessagePlayer(
                       audioUrl: audioUrl!,
                       duration: audioDuration,
                       isMe: isMe,
                     ),
-
                   if (text.isNotEmpty)
                     Text(
                       text,
@@ -1991,14 +1785,11 @@ class MessageBubble extends StatelessWidget {
                         height: 1.3,
                       ),
                     ),
-
                   const SizedBox(height: 4),
-
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      // 🔥 НОВИЙ КОД: Показуємо "edited" якщо повідомлення відредаговано
                       if (edited) ...[
                         Text(
                           'ред.',
@@ -2034,22 +1825,14 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
         ),
-
-        // 🔥 НОВИЙ КОД: Реакції під повідомленням
         if (reactions != null && reactions!.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(
-              top: -13,
-              left: 8,
-              right: 8,
-            ), // 🔥 12→8, 4→2 компактніше
+            padding: const EdgeInsets.only(top: -13, left: 8, right: 8),
             child: ReactionsDisplay(
               reactions: reactions,
               currentUsername: currentUsername,
               onReactionTap: (emoji) {
-                if (onReactionTap != null) {
-                  onReactionTap!(messageId, emoji);
-                }
+                if (onReactionTap != null) onReactionTap!(messageId, emoji);
               },
             ),
           ),
@@ -2064,8 +1847,9 @@ class MessageBubble extends StatelessWidget {
     }
     try {
       DateTime date;
-      if (timestamp is String) {
-        // 🔥 ВИПРАВЛЕНО: .toLocal() конвертує UTC → місцевий час
+      if (timestamp is Timestamp) {
+        date = timestamp.toDate();
+      } else if (timestamp is String) {
         date = DateTime.parse(timestamp).toLocal();
       } else if (timestamp is Map && timestamp['_seconds'] != null) {
         date = DateTime.fromMillisecondsSinceEpoch(
@@ -2081,26 +1865,21 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
-//---------+++++-------+++++++++--------++++++++--------++++++++------++++++++++++
 // =======================
-// ❤️ REACTION PICKER WIDGET
+// ❤️ REACTION PICKER & DISPLAY
 // =======================
 class ReactionPicker extends StatelessWidget {
   final Function(String) onReactionSelected;
-
   const ReactionPicker({super.key, required this.onReactionSelected});
-
   static const reactions = ['❤️', '👍', '😂', '😮', '😢', '🙏', '🔥', '👏'];
-
   @override
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
       duration: const Duration(milliseconds: 300),
       tween: Tween(begin: 0.0, end: 1.0),
       curve: Curves.easeOutBack,
-      builder: (context, value, child) {
-        return Transform.scale(scale: value, child: child);
-      },
+      builder: (context, value, child) =>
+          Transform.scale(scale: value, child: child),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -2111,32 +1890,27 @@ class ReactionPicker extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
-          children: reactions.map((emoji) {
-            return GestureDetector(
-              onTap: () => onReactionSelected(emoji),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4), // 🔥 6 → 4
-                child: Text(
-                  emoji,
-                  style: const TextStyle(fontSize: 24), // 🔥 28 → 24
+          children: reactions
+              .map(
+                (emoji) => GestureDetector(
+                  onTap: () => onReactionSelected(emoji),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                  ),
                 ),
-              ),
-            );
-          }).toList(),
+              )
+              .toList(),
         ),
       ),
     );
   }
 }
 
-// =======================
-// 💬 REACTIONS DISPLAY WIDGET
-// =======================
 class ReactionsDisplay extends StatelessWidget {
   final Map<String, dynamic>? reactions;
   final String currentUsername;
   final Function(String) onReactionTap;
-
   const ReactionsDisplay({
     super.key,
     this.reactions,
@@ -2146,49 +1920,35 @@ class ReactionsDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (reactions == null || reactions!.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
+    if (reactions == null || reactions!.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 0), // 🔥 4 → 2 ближче до повідомлення
+      padding: const EdgeInsets.only(top: 0),
       child: Wrap(
-        spacing: 2, // 🔥 6 → 3 компактніше
+        spacing: 2,
         runSpacing: 3,
         children: reactions!.entries.map((entry) {
           final emoji = entry.key;
           final users = List<String>.from(entry.value);
-          final hasMyReaction = users.contains(currentUsername);
-
+          // final hasMyReaction = users.contains(currentUsername); // Можна використати для підсвітки
           return GestureDetector(
             onTap: () => onReactionTap(emoji),
             child: Container(
-              // 🔥 КОМПАКТНИЙ ДИЗАЙН як в Signal
-              padding: const EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 3,
-              ), // 🔥 10×6 → 6×3
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               decoration: BoxDecoration(
-                color: hasMyReaction
-                    ? Colors.grey[900]?.withOpacity(0.9)
-                    : Colors.grey[900]?.withOpacity(0.9),
+                color: Colors.grey[900]?.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(12),
-                // 🔥 20 → 12 менш круглий
                 border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    emoji,
-                    style: const TextStyle(fontSize: 14), // 🔥 18 → 14 менше
-                  ),
+                  Text(emoji, style: const TextStyle(fontSize: 14)),
                   if (users.length > 1) ...[
-                    const SizedBox(width: 3), // 🔥 4 → 3
+                    const SizedBox(width: 3),
                     Text(
                       '${users.length}',
                       style: const TextStyle(
-                        fontSize: 11, // 🔥 13 → 11 менше
+                        fontSize: 11,
                         color: Colors.white70,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2211,14 +1971,12 @@ class SwipeToReply extends StatefulWidget {
   final Widget child;
   final VoidCallback onReply;
   final Color? replyIconColor;
-
   const SwipeToReply({
     super.key,
     required this.child,
     required this.onReply,
     this.replyIconColor,
   });
-
   @override
   State<SwipeToReply> createState() => _SwipeToReplyState();
 }
@@ -2228,10 +1986,8 @@ class _SwipeToReplyState extends State<SwipeToReply>
   late AnimationController _controller;
   late Animation<double> _iconScaleAnimation;
   late Animation<double> _iconOpacityAnimation;
-
   double _dragExtent = 0;
   bool _dragUnderway = false;
-
   static const double _kReplyThreshold = 80.0;
 
   @override
@@ -2241,12 +1997,10 @@ class _SwipeToReplyState extends State<SwipeToReply>
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-
     _iconScaleAnimation = Tween<double>(
       begin: 0.0,
       end: 1.2,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticOut));
-
     _iconOpacityAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -2266,36 +2020,21 @@ class _SwipeToReplyState extends State<SwipeToReply>
 
   void _handleDragUpdate(DragUpdateDetails details) {
     if (!_dragUnderway) return;
-
     final delta = details.primaryDelta!;
-
-    if (delta > 0) {
-      setState(() {
-        _dragExtent = (_dragExtent + delta).clamp(0.0, _kReplyThreshold * 1.5);
-        _controller.value = (_dragExtent / _kReplyThreshold).clamp(0.0, 1.0);
-      });
-    }
+    // 🔥 ВИПРАВЛЕНО: Прибрали if (delta > 0), щоб можна було повертати назад
+    setState(() {
+      _dragExtent = (_dragExtent + delta).clamp(0.0, _kReplyThreshold * 1.5);
+      _controller.value = (_dragExtent / _kReplyThreshold).clamp(0.0, 1.0);
+    });
   }
 
   void _handleDragEnd(DragEndDetails details) {
     if (!_dragUnderway) return;
     _dragUnderway = false;
-
     if (_dragExtent >= _kReplyThreshold) {
-      // Додайте вібрацію
-      Vibration.vibrate(duration: 50); // 🔥 НОВИЙ КОД
+      Vibration.vibrate(duration: 50);
       widget.onReply();
     }
-
-    if (_dragExtent >= _kReplyThreshold) {
-      SystemSound.play(SystemSoundType.click); // 🔥 НОВИЙ КОД
-      widget.onReply();
-    }
-
-    if (_dragExtent >= _kReplyThreshold) {
-      widget.onReply();
-    }
-
     setState(() {
       _dragExtent = 0;
     });
@@ -2313,42 +2052,37 @@ class _SwipeToReplyState extends State<SwipeToReply>
           Positioned.fill(
             child: AnimatedBuilder(
               animation: _controller,
-              builder: (context, child) {
-                return Container(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.only(left: 20),
-                  child: Opacity(
-                    opacity: _iconOpacityAnimation.value,
-                    child: Transform.scale(
-                      scale: _iconScaleAnimation.value,
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: (widget.replyIconColor ?? AppColors.mainColor)
-                              .withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.reply,
-                          color: widget.replyIconColor ?? AppColors.mainColor,
-                          size: 24,
-                        ),
+              builder: (context, child) => Container(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.only(left: 20),
+                child: Opacity(
+                  opacity: _iconOpacityAnimation.value,
+                  child: Transform.scale(
+                    scale: _iconScaleAnimation.value,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: (widget.replyIconColor ?? AppColors.mainColor)
+                            .withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.reply,
+                        color: widget.replyIconColor ?? AppColors.mainColor,
+                        size: 24,
                       ),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
-
           AnimatedBuilder(
             animation: _controller,
-            builder: (context, child) {
-              return Transform.translate(
-                offset: Offset(_dragExtent, 0),
-                child: child,
-              );
-            },
+            builder: (context, child) => Transform.translate(
+              offset: Offset(_dragExtent, 0),
+              child: child,
+            ),
             child: widget.child,
           ),
         ],
@@ -2356,5 +2090,3 @@ class _SwipeToReplyState extends State<SwipeToReply>
     );
   }
 }
-
-//---BackUp
