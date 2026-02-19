@@ -1,7 +1,6 @@
 ﻿import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,12 +28,13 @@ const String serverUrl = 'https://pproject-y.onrender.com';
 bool firebaseAvailable = false;
 
 class AppColors {
-  static const Color mainColor = Color(0xFF3A76F0);
-  static const Color bgGradientTop = Color(0xFF1b1e28);
-  static const Color bgGradientMid = Color(0xFF1b1e28);
-  static const Color bgGradientBot = Color(0xFF1b1e28);
-  static const Color bubbleMeStart = mainColor;
-  static const Color bubbleMeEnd = Color(0xCC2C61D6);
+  static const Color mainColor = SignalColors.primary;
+  // Зворотна сумісність
+  static const Color bgGradientTop = SignalColors.appBackground;
+  static const Color bgGradientMid = SignalColors.appBackground;
+  static const Color bgGradientBot = SignalColors.appBackground;
+  static const Color bubbleMeStart = SignalColors.outgoing;
+  static const Color bubbleMeEnd = SignalColors.outgoing;
   static const Color bubbleOther = Colors.white;
   static const Color white = Colors.white;
   static const Color whiteGlass = Colors.white10;
@@ -100,19 +100,20 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// GlassBox замінено SolidBox — без BackdropFilter
 class GlassBox extends StatelessWidget {
   final Widget child;
   final double borderRadius;
-  final double blur;
-  final double opacity;
+  final double blur; // kept for API compat, ignored
+  final double opacity; // kept for API compat, ignored
   final Border? border;
 
   const GlassBox({
     super.key,
     required this.child,
     this.borderRadius = 0,
-    this.blur = 10.0,
-    this.opacity = 0.1,
+    this.blur = 0,
+    this.opacity = 0,
     this.border,
   });
 
@@ -120,18 +121,12 @@ class GlassBox extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(opacity),
-            borderRadius: BorderRadius.circular(borderRadius),
-            border:
-                border ??
-                Border.all(color: Colors.white.withOpacity(0.1), width: 0.3),
-          ),
-          child: child,
+      child: Container(
+        decoration: BoxDecoration(
+          color: SignalColors.surface,
+          borderRadius: BorderRadius.circular(borderRadius),
         ),
+        child: child,
       ),
     );
   }
@@ -449,7 +444,7 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF202020),
+        backgroundColor: SignalColors.elevated,
         title: const Text("Оновлення", style: TextStyle(color: Colors.white)),
         content: const Text(
           "Новий патч доступний. Завантажити?",
@@ -1042,7 +1037,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2a2d3a),
+                      color: SignalColors.elevated,
                       borderRadius: BorderRadius.circular(32),
                     ),
                     child: Row(
@@ -1074,7 +1069,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2a2d3a),
+                      color: SignalColors.elevated,
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Column(
@@ -1191,7 +1186,7 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF202020),
+        backgroundColor: SignalColors.elevated,
         title: const Text("Видалити?", style: TextStyle(color: Colors.white)),
         content: const Text(
           "Це незворотно.",
@@ -1262,57 +1257,42 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
-        child: GlassBox(
-          blur: 15,
-          opacity: 1.0,
-          border: const Border(),
-          child: AppBar(
-            backgroundColor: const Color.fromARGB(
-              255,
-              36,
-              36,
-              36,
-            ).withValues(alpha: 1.0),
-            elevation: 0,
-            centerTitle: true,
-            title: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.otherUsername,
-                  style: const TextStyle(fontSize: 17, color: Colors.white),
-                ),
-              ],
-            ),
-            actions: [
-              IconButton(
-                icon: Icon(
-                  Icons.system_update,
-                  color: _isUpdateAvailable
-                      ? AppColors.mainColor
-                      : Colors.white70,
-                ),
-                onPressed: _manualCheckForUpdate,
-              ),
-            ],
-          ),
+      extendBodyBehindAppBar: false,
+      appBar: AppBar(
+        backgroundColor: SignalColors.surface,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: SignalColors.textPrimary),
+          onPressed: () => Navigator.pop(context),
         ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.otherUsername,
+              style: const TextStyle(
+                fontSize: 17,
+                color: SignalColors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              Icons.system_update,
+              color: _isUpdateAvailable
+                  ? SignalColors.primary
+                  : SignalColors.textSecondary,
+            ),
+            onPressed: _manualCheckForUpdate,
+          ),
+        ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              AppColors.bgGradientTop,
-              AppColors.bgGradientMid,
-              AppColors.bgGradientBot,
-            ],
-          ),
-        ),
+        color: SignalColors.appBackground,
         child: Stack(
           children: [
             Positioned.fill(
@@ -1451,16 +1431,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _showVoiceConfirm;
 
     return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.transparent,
-            AppColors.bgGradientBot.withOpacity(0.95),
-          ],
-        ),
-      ),
+      color: SignalColors.surface,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1615,10 +1586,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildTextFieldWithIcons() {
-    return GlassBox(
-      borderRadius: 24,
-      opacity: 0.15,
-      blur: 20,
+    return Container(
+      constraints: const BoxConstraints(minHeight: AppSizes.inputHeight),
+      decoration: BoxDecoration(
+        color: SignalColors.inputField,
+        borderRadius: BorderRadius.circular(AppSizes.inputBorderRadius),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1633,23 +1606,29 @@ class _ChatScreenState extends State<ChatScreen> {
                   });
                 }
               },
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: AppSizes.inputFontSize,
+              ),
               maxLines: 5,
               minLines: 1,
               decoration: const InputDecoration(
-                hintText: "Повідомлення...",
-                hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
+                hintText: 'Повідомлення...',
+                hintStyle: TextStyle(
+                  color: SignalColors.textSecondary,
+                  fontSize: AppSizes.inputHintFontSize,
+                ),
                 border: InputBorder.none,
                 contentPadding: EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
+                  horizontal: 18,
+                  vertical: 14,
                 ),
-                isDense: true,
+                isDense: false,
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.only(right: 6),
+            padding: const EdgeInsets.only(right: 8),
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
               transitionBuilder: (child, anim) =>
@@ -1659,7 +1638,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       key: const ValueKey('plus'),
                       icon: Icons.add_circle_outline,
                       onTap: _pickAndUploadImage,
-                      color: Colors.white54,
+                      color: SignalColors.textSecondary,
                     )
                   : Row(
                       key: const ValueKey('mic-video'),
@@ -1670,12 +1649,14 @@ class _ChatScreenState extends State<ChatScreen> {
                           onLongPressEnd: (_) => _onMicPressEnd(),
                           child: _buildInlineIconRaw(
                             icon: Icons.mic,
-                            color: _isRecording ? Colors.red : Colors.white54,
+                            color: _isRecording
+                                ? SignalColors.danger
+                                : SignalColors.textSecondary,
                           ),
                         ),
                         _buildInlineIconRaw(
                           icon: Icons.videocam_outlined,
-                          color: Colors.white38,
+                          color: SignalColors.textSecondary,
                           onTap: () =>
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -1701,8 +1682,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
-        child: Icon(icon, color: color, size: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: Icon(icon, color: color, size: AppSizes.inlineIconSize),
       ),
     );
   }
@@ -1717,8 +1698,8 @@ class _ChatScreenState extends State<ChatScreen> {
       key: key,
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
-        child: Icon(icon, color: color, size: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: Icon(icon, color: color, size: AppSizes.inlineIconSize),
       ),
     );
   }
@@ -1733,15 +1714,13 @@ class _ChatScreenState extends State<ChatScreen> {
               key: const ValueKey('send'),
               icon: _isEditing ? Icons.check : Icons.arrow_upward,
               onPressed: sendMessage,
-              color: AppColors.mainColor,
-              size: 32,
+              color: SignalColors.primary,
             )
           : _buildCircleButton(
               key: const ValueKey('attach'),
               icon: Icons.attach_file,
               onPressed: _pickAndUploadImage,
-              color: AppColors.mainColor,
-              size: 32,
+              color: SignalColors.primary,
             ),
     );
   }
@@ -1753,15 +1732,15 @@ class _ChatScreenState extends State<ChatScreen> {
     required IconData icon,
     required VoidCallback onPressed,
     required Color color,
-    double size = 36,
+    double size = AppSizes.actionButtonSize,
   }) {
     return Container(
       key: key,
-      width: size + 8,
-      height: size + 8,
+      width: size,
+      height: size,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: IconButton(
-        iconSize: size * 0.55,
+        iconSize: AppSizes.actionIconSize,
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: Colors.white),
         onPressed: onPressed,
@@ -1879,31 +1858,25 @@ class MessageBubble extends StatelessWidget {
           child: Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75,
+              maxWidth:
+                  MediaQuery.of(context).size.width *
+                  AppSizes.bubbleMaxWidthRatio,
             ),
             decoration: BoxDecoration(
-              gradient: isMe
-                  ? const LinearGradient(
-                      colors: [AppColors.bubbleMeStart, AppColors.bubbleMeEnd],
-                    )
-                  : null,
-              color: isMe ? null : AppColors.bubbleOther.withOpacity(0.1),
+              color: isMe ? SignalColors.outgoing : SignalColors.incoming,
               borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
+                topLeft: const Radius.circular(AppSizes.bubbleRadius),
+                topRight: const Radius.circular(AppSizes.bubbleRadius),
                 bottomLeft: isMe
-                    ? const Radius.circular(18)
+                    ? const Radius.circular(AppSizes.bubbleRadius)
                     : const Radius.circular(4),
                 bottomRight: isMe
                     ? const Radius.circular(4)
-                    : const Radius.circular(18),
+                    : const Radius.circular(AppSizes.bubbleRadius),
               ),
-              border: isMe
-                  ? null
-                  : Border.all(color: Colors.white.withOpacity(0.1)),
             ),
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSizes.bubblePadding),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1939,7 +1912,7 @@ class MessageBubble extends StatelessWidget {
                     Text(
                       text,
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: AppSizes.bubbleFontSize,
                         color: Colors.white,
                         height: 1.3,
                       ),
@@ -1953,7 +1926,7 @@ class MessageBubble extends StatelessWidget {
                         Text(
                           'ред.',
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: AppSizes.bubbleTimeFontSize,
                             color: Colors.white.withOpacity(0.4),
                             fontStyle: FontStyle.italic,
                           ),
@@ -1963,7 +1936,7 @@ class MessageBubble extends StatelessWidget {
                       Text(
                         timeText,
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: AppSizes.bubbleTimeFontSize,
                           color: Colors.white.withOpacity(0.6),
                         ),
                       ),
@@ -2281,12 +2254,15 @@ class DateSeparator extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
+            color: SignalColors.elevated,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
             date,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: const TextStyle(
+              color: SignalColors.textSecondary,
+              fontSize: 12,
+            ),
           ),
         ),
       ),
@@ -2346,7 +2322,7 @@ class _TypingIndicatorState extends State<TypingIndicator>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF2a2d3a),
+              color: SignalColors.incoming,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(

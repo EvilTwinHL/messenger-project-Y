@@ -5,12 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
-import 'main.dart'; // Для ChatScreen та AppColors
+import 'main.dart';
+import 'theme.dart';
 
 class HomeScreen extends StatefulWidget {
   final String myUsername;
   final String? myAvatarUrl;
-
   const HomeScreen({super.key, required this.myUsername, this.myAvatarUrl});
 
   @override
@@ -18,35 +18,32 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // 🖥️ Для Windows (де Firestore недоступний) — завантажуємо чати через HTTP
+  int _currentTab = 0; // 0=Chats 1=Contacts 2=Settings 3=Account
+
   List<Map<String, dynamic>> _windowsChats = [];
   bool _windowsChatsLoading = false;
 
   @override
   void initState() {
     super.initState();
-    if (!firebaseAvailable) {
-      _loadWindowsChats();
-    }
+    if (!firebaseAvailable) _loadWindowsChats();
   }
 
-  // 🖥️ Завантажуємо список чатів через REST API (для Windows)
   Future<void> _loadWindowsChats() async {
     setState(() => _windowsChatsLoading = true);
     try {
-      final response = await http.get(
+      final res = await http.get(
         Uri.parse('$serverUrl/get_user_chats?username=${widget.myUsername}'),
       );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as List;
+      if (res.statusCode == 200) {
         setState(() {
-          _windowsChats = data
+          _windowsChats = (jsonDecode(res.body) as List)
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
         });
       }
     } catch (e) {
-      print('Помилка завантаження чатів (Windows): $e');
+      debugPrint('Помилка: $e');
     } finally {
       setState(() => _windowsChatsLoading = false);
     }
@@ -58,149 +55,121 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
     );
   }
 
-  String _formatTime(dynamic timestamp) {
-    if (timestamp == null) return '';
-    DateTime date;
+  String _formatTime(dynamic ts) {
+    if (ts == null) return '';
     try {
-      if (timestamp is Timestamp) {
-        date = timestamp.toDate();
-      } else if (timestamp is String) {
-        date = DateTime.parse(timestamp).toLocal();
-      } else if (timestamp is int) {
-        date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      DateTime d;
+      if (ts is Timestamp) {
+        d = ts.toDate();
+      } else if (ts is String) {
+        d = DateTime.parse(ts).toLocal();
+      } else if (ts is int) {
+        d = DateTime.fromMillisecondsSinceEpoch(ts);
       } else {
         return '';
       }
-    } catch (e) {
+      return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
       return '';
     }
-    return "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
   }
 
+  // ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final safePad = MediaQuery.of(context).padding.bottom;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      // ── DRAWER ──────────────────────────────────────────────────────
-      drawer: Drawer(
-        backgroundColor: const Color(0xFF1E1E1E),
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF1b1e28), Color(0xFF2a2d3a)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+      backgroundColor: SignalColors.appBackground,
+      appBar: _buildAppBar(),
+      // Контент займає весь екран — навігація плаває зверху через Stack
+      body: Stack(
+        children: [
+          // ── Сторінки ─────────────────────────────────────────────
+          Padding(
+            // відступ знизу, щоб контент не ховався за таблеткою
+            padding: EdgeInsets.only(
+              bottom:
+                  AppSizes.navBarHeight +
+                  AppSizes.navBarPaddingBottom +
+                  safePad +
+                  8,
+            ),
+            child: IndexedStack(
+              index: _currentTab,
+              children: [
+                _buildChatsTab(),
+                _buildContactsTab(),
+                const SettingsScreen(),
+                _buildAccountTab(),
+              ],
+            ),
+          ),
+
+          // ── FAB ──────────────────────────────────────────────────
+          if (_currentTab == 0)
+            Positioned(
+              right: 20,
+              bottom:
+                  AppSizes.navBarHeight +
+                  AppSizes.navBarPaddingBottom +
+                  safePad +
+                  16,
+              child: FloatingActionButton(
+                backgroundColor: SignalColors.primary,
+                elevation: 4,
+                child: const Icon(
+                  Icons.edit_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        SearchUserScreen(myUsername: widget.myUsername),
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 30,
-                      backgroundColor: AppColors.mainColor,
-                      backgroundImage: widget.myAvatarUrl != null
-                          ? NetworkImage(widget.myAvatarUrl!)
-                          : null,
-                      child: widget.myAvatarUrl == null
-                          ? Text(
-                              widget.myUsername.isNotEmpty
-                                  ? widget.myUsername[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      widget.myUsername,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
               ),
-              const SizedBox(height: 8),
-              // New Chat
-              ListTile(
-                leading: const Icon(Icons.edit, color: Colors.white70),
-                title: const Text(
-                  'Новий чат',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          SearchUserScreen(myUsername: widget.myUsername),
-                    ),
-                  );
-                },
-              ),
-              // Settings
-              ListTile(
-                leading: const Icon(Icons.settings, color: Colors.white70),
-                title: const Text(
-                  'Налаштування',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                },
-              ),
-              const Divider(color: Colors.white12),
-              const Spacer(),
-              // Logout
-              ListTile(
-                leading: const Icon(Icons.exit_to_app, color: Colors.redAccent),
-                title: const Text(
-                  'Вийти',
-                  style: TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _logout();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
+            ),
+
+          // ── Плаваюча таблетка навігації ───────────────────────────
+          Positioned(
+            left: AppSizes.navBarPaddingH,
+            right: AppSizes.navBarPaddingH,
+            bottom: AppSizes.navBarPaddingBottom + safePad,
+            child: _OvalNavBar(
+              currentIndex: _currentTab,
+              onTap: (i) => setState(() => _currentTab = i),
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ── AppBar ────────────────────────────────────────────────────────
+  PreferredSizeWidget _buildAppBar() {
+    const titles = ['Повідомлення', 'Контакти', 'Налаштування', 'Акаунт'];
+    return AppBar(
+      backgroundColor: SignalColors.surface,
+      elevation: 0,
+      title: Text(
+        titles[_currentTab],
+        style: const TextStyle(
+          color: SignalColors.textPrimary,
+          fontWeight: FontWeight.bold,
+          fontSize: AppSizes.appBarTitleSize,
         ),
       ),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text(
-          "Повідомлення",
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-        ),
-        // Drawer burger icon is auto-added by Scaffold
-        actions: [
+      actions: [
+        if (_currentTab == 0)
           IconButton(
-            icon: const Icon(Icons.search, color: Colors.white),
+            icon: const Icon(Icons.search, color: SignalColors.textPrimary),
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -208,136 +177,72 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.mainColor,
-        child: const Icon(Icons.edit, color: Colors.white),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  SearchUserScreen(myUsername: widget.myUsername),
-            ),
-          );
-        },
-      ),
-      body: firebaseAvailable
-          ? _buildFirestoreChatList()
-          : _buildWindowsChatList(),
+      ],
     );
   }
 
-  // 📱 Android/iOS: список чатів через Firestore (real-time)
+  // ── CHATS TAB ─────────────────────────────────────────────────────
+  Widget _buildChatsTab() =>
+      firebaseAvailable ? _buildFirestoreChatList() : _buildWindowsChatList();
+
   Widget _buildFirestoreChatList() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('chats')
           .where('participants', arrayContains: widget.myUsername)
           .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          if (snapshot.error.toString().contains("index") ||
-              snapshot.error.toString().contains("FAILED_PRECONDITION")) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      color: Colors.orange,
-                      size: 40,
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      "Потрібен індекс Firestore!",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      "Відкрийте Debug Console та натисніть на посилання для створення індексу.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white.withOpacity(0.7)),
-                    ),
-                  ],
-                ),
-              ),
-            );
+      builder: (ctx, snap) {
+        if (snap.hasError) {
+          final e = snap.error.toString();
+          if (e.contains('index') || e.contains('FAILED_PRECONDITION')) {
+            return _buildIndexError();
           }
           return Center(
             child: Text(
-              "Помилка: ${snapshot.error}",
-              style: const TextStyle(color: Colors.red),
+              'Помилка: ${snap.error}',
+              style: const TextStyle(color: SignalColors.danger),
             ),
           );
         }
-
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: SignalColors.primary),
+          );
         }
+        if (!snap.hasData || snap.data!.docs.isEmpty) return _buildEmptyChats();
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return _buildEmptyChatsView();
-        }
-
-        final chats = snapshot.data!.docs;
-        final sortedChats = [...chats]
+        final chats = [...snap.data!.docs]
           ..sort((a, b) {
             try {
-              final aData = a.data() as Map<String, dynamic>;
-              final bData = b.data() as Map<String, dynamic>;
-              final aTs =
-                  (aData['lastMessage'] as Map<String, dynamic>?)?['timestamp'];
-              final bTs =
-                  (bData['lastMessage'] as Map<String, dynamic>?)?['timestamp'];
-              if (aTs == null && bTs == null) return 0;
-              if (aTs == null) return 1;
-              if (bTs == null) return -1;
-              // timestamp може бути Firestore Timestamp АБО ISO рядком (якщо збережено сервером)
-              int aTime = 0, bTime = 0;
-              if (aTs is Timestamp) {
-                aTime = aTs.millisecondsSinceEpoch;
-              } else if (aTs is String) {
-                aTime = DateTime.tryParse(aTs)?.millisecondsSinceEpoch ?? 0;
-              }
-              if (bTs is Timestamp) {
-                bTime = bTs.millisecondsSinceEpoch;
-              } else if (bTs is String) {
-                bTime = DateTime.tryParse(bTs)?.millisecondsSinceEpoch ?? 0;
-              }
-              return bTime.compareTo(aTime);
+              final aTs = (a.data() as Map)['lastMessage']?['timestamp'];
+              final bTs = (b.data() as Map)['lastMessage']?['timestamp'];
+              return _tsToMs(bTs).compareTo(_tsToMs(aTs));
             } catch (_) {
               return 0;
             }
           });
 
         return ListView.builder(
-          itemCount: sortedChats.length,
-          itemBuilder: (context, index) {
+          itemCount: chats.length,
+          itemBuilder: (_, i) {
             try {
-              final chat = sortedChats[index].data() as Map<String, dynamic>;
-              final chatId = sortedChats[index].id;
-              final List participants = chat['participants'] ?? [];
-              String otherUser = participants.firstWhere(
-                (u) => u != widget.myUsername,
-                orElse: () => "Користувач",
-              );
-              final lastMsg = chat['lastMessage'] ?? {};
-              final lastMsgText = lastMsg['text'] ?? '';
-              final dynamic lastMsgTime = lastMsg['timestamp'];
+              final chat = chats[i].data() as Map<String, dynamic>;
+              final chatId = chats[i].id;
+              final participants = chat['participants'] as List? ?? [];
+              final other =
+                  participants.firstWhere(
+                        (u) => u != widget.myUsername,
+                        orElse: () => 'Користувач',
+                      )
+                      as String;
+              final lm = chat['lastMessage'] ?? {};
               return _buildChatTile(
                 chatId,
-                otherUser,
-                lastMsgText,
-                lastMsgTime,
+                other,
+                (lm['text'] ?? '') as String,
+                lm['timestamp'],
               );
-            } catch (e) {
+            } catch (_) {
               return const SizedBox.shrink();
             }
           },
@@ -346,113 +251,412 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 🖥️ Windows: список чатів через HTTP API
+  int _tsToMs(dynamic ts) {
+    if (ts == null) return 0;
+    if (ts is Timestamp) return ts.millisecondsSinceEpoch;
+    if (ts is String) return DateTime.tryParse(ts)?.millisecondsSinceEpoch ?? 0;
+    return 0;
+  }
+
   Widget _buildWindowsChatList() {
     if (_windowsChatsLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(color: SignalColors.primary),
+      );
     }
-    if (_windowsChats.isEmpty) {
-      return _buildEmptyChatsView();
-    }
+    if (_windowsChats.isEmpty) return _buildEmptyChats();
     return RefreshIndicator(
+      color: SignalColors.primary,
       onRefresh: _loadWindowsChats,
       child: ListView.builder(
         itemCount: _windowsChats.length,
-        itemBuilder: (context, index) {
-          final chat = _windowsChats[index];
+        itemBuilder: (_, i) {
+          final chat = _windowsChats[i];
           final chatId = chat['id'] as String? ?? '';
-          final List participants = (chat['participants'] as List?) ?? [];
-          String otherUser = participants.firstWhere(
-            (u) => u != widget.myUsername,
-            orElse: () => "Користувач",
-          );
-          final lastMsg = chat['lastMessage'] ?? {};
-          final lastMsgText = (lastMsg is Map) ? (lastMsg['text'] ?? '') : '';
-          final dynamic lastMsgTime = (lastMsg is Map)
-              ? lastMsg['timestamp']
-              : null;
-          return _buildChatTile(chatId, otherUser, lastMsgText, lastMsgTime);
+          final participants = chat['participants'] as List? ?? [];
+          final other =
+              participants.firstWhere(
+                    (u) => u != widget.myUsername,
+                    orElse: () => 'Користувач',
+                  )
+                  as String;
+          final lm = chat['lastMessage'];
+          final text = (lm is Map) ? (lm['text'] ?? '') as String : '';
+          final ts = (lm is Map) ? lm['timestamp'] : null;
+          return _buildChatTile(chatId, other, text, ts);
         },
-      ),
-    );
-  }
-
-  Widget _buildEmptyChatsView() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.chat_bubble_outline,
-            size: 60,
-            color: Colors.white24,
-          ),
-          const SizedBox(height: 10),
-          const Text("Немає чатів", style: TextStyle(color: Colors.white54)),
-          TextButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) =>
-                    SearchUserScreen(myUsername: widget.myUsername),
-              ),
-            ),
-            child: const Text("Почати спілкування"),
-          ),
-        ],
       ),
     );
   }
 
   Widget _buildChatTile(
     String chatId,
-    String otherUser,
-    String lastMsgText,
-    dynamic lastMsgTime,
+    String other,
+    String lastText,
+    dynamic lastTs,
   ) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: CircleAvatar(
-        radius: 26,
-        backgroundColor: AppColors.mainColor,
-        child: Text(
-          otherUser.isNotEmpty ? otherUser[0].toUpperCase() : "?",
-          style: const TextStyle(color: Colors.white, fontSize: 20),
-        ),
-      ),
-      title: Text(
-        otherUser,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Text(
-        lastMsgText,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Colors.white54),
-      ),
-      trailing: Text(
-        _formatTime(lastMsgTime),
-        style: const TextStyle(color: Colors.white38, fontSize: 12),
-      ),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              username: widget.myUsername,
-              chatId: chatId,
-              otherUsername: otherUser,
-              avatarUrl: widget.myAvatarUrl,
+    final colors = SignalColors.avatarColorsFor(other);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        splashColor: SignalColors.primary.withOpacity(0.08),
+        highlightColor: Colors.transparent,
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatScreen(
+                username: widget.myUsername,
+                chatId: chatId,
+                otherUsername: other,
+                avatarUrl: widget.myAvatarUrl,
+              ),
             ),
+          ).then((_) {
+            if (!firebaseAvailable) _loadWindowsChats();
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: AppSizes.avatarRadiusMedium,
+                backgroundColor: colors[0],
+                child: Text(
+                  other.isNotEmpty ? other[0].toUpperCase() : '?',
+                  style: TextStyle(
+                    color: colors[1],
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.avatarRadiusMedium * 0.66,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            other,
+                            style: const TextStyle(
+                              color: SignalColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _formatTime(lastTs),
+                          style: const TextStyle(
+                            color: SignalColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      lastText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: SignalColors.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ).then((_) {
-          // Оновлюємо список після повернення з чату (Windows)
-          if (!firebaseAvailable) _loadWindowsChats();
-        });
-      },
+        ),
+      ),
     );
   }
+
+  Widget _buildEmptyChats() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.chat_bubble_outline,
+            size: 64,
+            color: SignalColors.textDisabled,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Немає чатів',
+            style: TextStyle(color: SignalColors.textSecondary, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SearchUserScreen(myUsername: widget.myUsername),
+              ),
+            ),
+            child: const Text(
+              'Почати спілкування',
+              style: TextStyle(color: SignalColors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIndexError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 40),
+            SizedBox(height: 12),
+            Text(
+              'Потрібен індекс Firestore!',
+              style: TextStyle(
+                color: SignalColors.textPrimary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Відкрийте Debug Console та натисніть на посилання для створення індексу.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: SignalColors.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── CONTACTS TAB ──────────────────────────────────────────────────
+  Widget _buildContactsTab() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.people_outline,
+            size: 64,
+            color: SignalColors.textDisabled,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Контакти',
+            style: TextStyle(color: SignalColors.textSecondary, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SearchUserScreen(myUsername: widget.myUsername),
+              ),
+            ),
+            child: const Text(
+              'Знайти користувача',
+              style: TextStyle(color: SignalColors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── ACCOUNT TAB ───────────────────────────────────────────────────
+  Widget _buildAccountTab() {
+    final colors = SignalColors.avatarColorsFor(widget.myUsername);
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      children: [
+        Center(
+          child: Column(
+            children: [
+              CircleAvatar(
+                radius: AppSizes.avatarRadiusLarge,
+                backgroundColor: colors[0],
+                backgroundImage: widget.myAvatarUrl != null
+                    ? NetworkImage(widget.myAvatarUrl!)
+                    : null,
+                child: widget.myAvatarUrl == null
+                    ? Text(
+                        widget.myUsername.isNotEmpty
+                            ? widget.myUsername[0].toUpperCase()
+                            : '?',
+                        style: TextStyle(
+                          color: colors[1],
+                          fontSize: AppSizes.avatarRadiusLarge * 0.75,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                widget.myUsername,
+                style: const TextStyle(
+                  color: SignalColors.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'онлайн',
+                style: TextStyle(color: SignalColors.online, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Divider(color: SignalColors.divider, height: 1),
+        _accTile(Icons.edit_outlined, 'Редагувати профіль'),
+        _accTile(Icons.notifications_outlined, 'Сповіщення'),
+        _accTile(Icons.privacy_tip_outlined, 'Приватність'),
+        const Divider(color: SignalColors.divider, height: 1),
+        ListTile(
+          leading: const Icon(Icons.exit_to_app, color: SignalColors.danger),
+          title: const Text(
+            'Вийти',
+            style: TextStyle(color: SignalColors.danger),
+          ),
+          onTap: _logout,
+        ),
+      ],
+    );
+  }
+
+  Widget _accTile(IconData icon, String label) => ListTile(
+    leading: Icon(icon, color: SignalColors.textSecondary),
+    title: Text(label, style: const TextStyle(color: SignalColors.textPrimary)),
+    trailing: const Icon(Icons.chevron_right, color: SignalColors.textDisabled),
+    onTap: () {},
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  🏷️  _OvalNavBar  —  плаваюча овальна навігація
+// ═══════════════════════════════════════════════════════════════════
+class _OvalNavBar extends StatelessWidget {
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+
+  const _OvalNavBar({required this.currentIndex, required this.onTap});
+
+  static const _items = [
+    _NavItem(
+      icon: Icons.chat_bubble_outline,
+      activeIcon: Icons.chat_bubble,
+      label: 'Чати',
+    ),
+    _NavItem(
+      icon: Icons.people_outline,
+      activeIcon: Icons.people,
+      label: 'Контакти',
+    ),
+    _NavItem(
+      icon: Icons.settings_outlined,
+      activeIcon: Icons.settings,
+      label: 'Налаштування',
+    ),
+    _NavItem(
+      icon: Icons.person_outline,
+      activeIcon: Icons.person,
+      label: 'Акаунт',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: AppSizes.navBarHeight,
+      decoration: BoxDecoration(
+        color: SignalColors.navBarBg,
+        borderRadius: BorderRadius.circular(AppSizes.navBarBorderRadius),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.55),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: List.generate(_items.length, (i) {
+          final active = i == currentIndex;
+          return Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onTap(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Іконка з підсвіченим фоном
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: active
+                            ? SignalColors.activeNavPill.withOpacity(0.18)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Icon(
+                        active ? _items[i].activeIcon : _items[i].icon,
+                        size: AppSizes.navIconSize,
+                        color: active
+                            ? SignalColors.activeNavPill
+                            : SignalColors.inactiveNav,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    // Лейбл
+                    Text(
+                      _items[i].label,
+                      style: TextStyle(
+                        fontSize: AppSizes.navLabelSize,
+                        fontWeight: active
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: active
+                            ? SignalColors.activeNavPill
+                            : SignalColors.inactiveNav,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _NavItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  const _NavItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+  });
 }

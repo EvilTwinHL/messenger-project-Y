@@ -1,7 +1,6 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'theme.dart'; // Імпортуємо нашу тему
+import 'theme.dart';
 
 class SignalContextMenu {
   static void show(
@@ -12,7 +11,6 @@ class SignalContextMenu {
     required Function(String emoji) onReactionTap,
     required Function(String action) onActionTap,
   }) {
-    // 1. Отримуємо координати повідомлення
     final RenderBox? renderBox =
         messageKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null) return;
@@ -20,14 +18,13 @@ class SignalContextMenu {
     final size = renderBox.size;
     final offset = renderBox.localToGlobal(Offset.zero);
 
-    // Вібрація при відкритті
     HapticFeedback.mediumImpact();
 
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
         barrierDismissible: true,
-        pageBuilder: (ctx, anim, secAnim) => _ContextMenuOverlay(
+        pageBuilder: (ctx, anim, _) => _ContextMenuOverlay(
           messageChild: messageChild,
           position: offset,
           size: size,
@@ -64,8 +61,8 @@ class _ContextMenuOverlay extends StatefulWidget {
 class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _opacityAnimation;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
 
   @override
   void initState() {
@@ -74,11 +71,11 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _scaleAnimation = Tween<double>(
-      begin: 0.8,
+    _scaleAnim = Tween(
+      begin: 0.85,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
-    _opacityAnimation = Tween<double>(
+    _fadeAnim = Tween(
       begin: 0.0,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
@@ -93,84 +90,66 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
+    final screen = MediaQuery.of(context).size;
+    final showBelow = widget.position.dy < screen.height / 2;
 
-    // Визначаємо, де малювати меню (зверху чи знизу від повідомлення)
-    final bool showMenuBelow = widget.position.dy < screenSize.height / 2;
-
-    // Відступи
-    const double reactionBarHeight = 60;
-    const double menuHeight = 250;
-
-    // Коригуємо позицію, щоб не вилазило за екран
-    double topPosition = widget.position.dy;
+    const reactionBarH = 60.0;
+    const menuH = 260.0;
 
     return DefaultTextStyle(
-      // Скидаємо будь-який успадкований TextDecoration (жовте підкреслення)
       style: const TextStyle(
         decoration: TextDecoration.none,
-        color: Colors.white,
+        color: SignalColors.textPrimary,
         fontFamily: 'Roboto',
       ),
       child: Stack(
         children: [
-          // 1. Розмитий фон (Backdrop)
+          // ── Solid dark overlay (NO blur) ────────────────
           GestureDetector(
             onTap: () => Navigator.of(context).pop(),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: Container(color: Colors.black.withOpacity(0.4)),
-            ),
+            child: Container(color: Colors.black.withOpacity(0.7)),
           ),
 
-          // 2. Саме повідомлення (Копія)
+          // ── Copy of message ─────────────────────────────
           Positioned(
-            top: topPosition,
+            top: widget.position.dy,
             left: widget.position.dx,
             width: widget.size.width,
-            child: Hero(
-              tag: 'message_hero', // Можна додати Hero для плавності
-              child: Material(
-                color: Colors.transparent,
-                child: widget.messageChild,
-              ),
+            child: Material(
+              color: Colors.transparent,
+              child: widget.messageChild,
             ),
           ),
 
-          // 3. Панель реакцій (Завжди трохи вище повідомлення)
+          // ── Reaction bar ─────────────────────────────────
           Positioned(
-            top: topPosition - reactionBarHeight - 10,
-            left: 20, // Центрувати або фіксовано
+            top: widget.position.dy - reactionBarH - 10,
+            left: 20,
             right: 20,
             child: ScaleTransition(
-              scale: _scaleAnimation,
+              scale: _scaleAnim,
               child: _ReactionBar(
-                onTap: (emoji) {
-                  widget.onReactionTap(emoji);
+                onTap: (e) {
+                  widget.onReactionTap(e);
                   Navigator.of(context).pop();
                 },
               ),
             ),
           ),
 
-          // 4. Меню дій (Знизу або зверху)
+          // ── Action menu ──────────────────────────────────
           Positioned(
-            top: showMenuBelow
-                ? topPosition + widget.size.height + 10
-                : topPosition -
-                      menuHeight -
-                      80, // Якщо знизу немає місця, кидаємо наверх
+            top: showBelow
+                ? widget.position.dy + widget.size.height + 10
+                : widget.position.dy - menuH - 80,
             left: widget.isMe ? null : 20,
             right: widget.isMe ? 20 : null,
-            width: 200,
+            width: 210,
             child: FadeTransition(
-              opacity: _opacityAnimation,
+              opacity: _fadeAnim,
               child: _ActionMenu(
                 isMe: widget.isMe,
                 onTap: (action) {
-                  // ⚠️ Спочатку ЗАКРИВАЄМО меню, потім викликаємо дію.
-                  // Якщо зробити навпаки — діалог (напр. підтвердження видалення)
-                  // з'являється під route меню і зникає разом з ним.
                   Navigator.of(context).pop();
                   Future.delayed(const Duration(milliseconds: 320), () {
                     widget.onActionTap(action);
@@ -180,45 +159,48 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
             ),
           ),
         ],
-      ), // Stack
-    ); // DefaultTextStyle
+      ),
+    );
   }
 }
 
+// ── Reaction bar ──────────────────────────────────────────────
 class _ReactionBar extends StatelessWidget {
   final Function(String) onTap;
   const _ReactionBar({required this.onTap});
 
-  final emojis = const ['❤️', '👍', '👎', '😂', '😮', '😢'];
+  static const _emojis = ['❤️', '👍', '👎', '😂', '😮', '😢'];
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 50,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF2C2C2C),
-        borderRadius: BorderRadius.circular(25),
+        color: SignalColors.elevated,
+        borderRadius: BorderRadius.circular(26),
         boxShadow: [
           BoxShadow(
-            color: Colors.black26,
-            blurRadius: 10,
-            offset: Offset(0, 4),
+            color: Colors.black.withOpacity(0.4),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: emojis
+        children: _emojis
             .map(
               (e) => GestureDetector(
                 onTap: () => onTap(e),
-                child: Text(
-                  e,
-                  style: const TextStyle(
-                    fontSize: 28,
-                    decoration:
-                        TextDecoration.none, // ← фікс жовтого підкреслення
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    e,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      decoration: TextDecoration.none,
+                    ),
                   ),
                 ),
               ),
@@ -229,6 +211,7 @@ class _ReactionBar extends StatelessWidget {
   }
 }
 
+// ── Action menu ───────────────────────────────────────────────
 class _ActionMenu extends StatelessWidget {
   final bool isMe;
   final Function(String) onTap;
@@ -240,29 +223,27 @@ class _ActionMenu extends StatelessWidget {
       color: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF2C2C2C),
-          borderRadius: BorderRadius.circular(16),
+          color: SignalColors.elevated,
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: Colors.black26,
-              blurRadius: 10,
-              offset: Offset(0, 4),
+              color: Colors.black.withOpacity(0.4),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _buildItem(Icons.reply, "Відповісти", "reply"),
-            _buildItem(Icons.copy, "Копіювати", "copy"),
+            _item(Icons.reply_outlined, 'Відповісти', 'reply'),
+            _divider(),
+            _item(Icons.copy_outlined, 'Копіювати', 'copy'),
             if (isMe) ...[
-              _buildItem(Icons.edit, "Редагувати", "edit"),
-              const Divider(height: 1, color: Colors.white10),
-              _buildItem(
-                Icons.delete,
-                "Видалити",
-                "delete",
-                isDestructive: true,
-              ),
+              _divider(),
+              _item(Icons.edit_outlined, 'Редагувати', 'edit'),
+              _divider(),
+              _item(Icons.delete_outline, 'Видалити', 'delete', red: true),
             ],
           ],
         ),
@@ -270,31 +251,24 @@ class _ActionMenu extends StatelessWidget {
     );
   }
 
-  Widget _buildItem(
-    IconData icon,
-    String text,
-    String id, {
-    bool isDestructive = false,
-  }) {
+  Widget _item(IconData icon, String label, String id, {bool red = false}) {
+    final color = red ? SignalColors.danger : SignalColors.textPrimary;
     return InkWell(
       onTap: () => onTap(id),
+      borderRadius: BorderRadius.circular(14),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(
           children: [
-            Icon(
-              icon,
-              size: 20,
-              color: isDestructive ? Colors.redAccent : Colors.white,
-            ),
-            const SizedBox(width: 12),
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 14),
             Text(
-              text,
+              label,
               style: TextStyle(
-                color: isDestructive ? Colors.redAccent : Colors.white,
-                fontSize: 16,
+                color: color,
+                fontSize: 15,
                 decoration: TextDecoration.none,
-                fontFamily: null,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -302,4 +276,11 @@ class _ActionMenu extends StatelessWidget {
       ),
     );
   }
+
+  Widget _divider() => const Divider(
+    color: SignalColors.divider,
+    height: 1,
+    indent: 16,
+    endIndent: 16,
+  );
 }

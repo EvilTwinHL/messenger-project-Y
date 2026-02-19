@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'main.dart'; // Для ChatScreen та serverUrl
+import 'main.dart';
+import 'theme.dart';
 
 class SearchUserScreen extends StatefulWidget {
   final String myUsername;
@@ -14,10 +14,9 @@ class SearchUserScreen extends StatefulWidget {
 
 class _SearchUserScreenState extends State<SearchUserScreen> {
   final TextEditingController _searchController = TextEditingController();
-  List<dynamic> _searchResults = [];
+  List<dynamic> _results = [];
   bool _isLoading = false;
 
-  // 1. Пошук користувачів через твоє нове API
   Future<void> _searchUsers(String query) async {
     if (query.isEmpty) return;
     setState(() => _isLoading = true);
@@ -28,21 +27,17 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
           '$serverUrl/search_users?q=$query&myUsername=${widget.myUsername}',
         ),
       );
-
       if (response.statusCode == 200) {
-        setState(() {
-          _searchResults = jsonDecode(response.body);
-        });
+        setState(() => _results = jsonDecode(response.body));
       }
     } catch (e) {
-      print("Error searching: $e");
+      debugPrint('Search error: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  // 2. Створення або відкриття діалогу
-  Future<void> _startChat(String otherUsername, String? avatarUrl) async {
+  Future<void> _startChat(String otherUsername) async {
     try {
       final response = await http.post(
         Uri.parse('$serverUrl/get_or_create_dm'),
@@ -52,77 +47,131 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
           'otherUsername': otherUsername,
         }),
       );
-
       if (response.statusCode == 200) {
-        final chatData = jsonDecode(response.body);
-        final chatId = chatData['id'];
-
+        final chatId = jsonDecode(response.body)['id'] as String;
         if (!mounted) return;
-
-        // Переходимо в чат
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => ChatScreen(
+            builder: (_) => ChatScreen(
               username: widget.myUsername,
-              chatId: chatId, // 🔥 Передаємо ID
-              otherUsername: otherUsername, // 🔥 Ім'я співрозмовника
-              avatarUrl: null, // Своя аватарка (можна дістати з prefs)
+              chatId: chatId,
+              otherUsername: otherUsername,
+              avatarUrl: null,
             ),
           ),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Помилка створення чату: $e")));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Помилка: $e')));
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: SignalColors.appBackground,
       appBar: AppBar(
+        backgroundColor: SignalColors.surface,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: SignalColors.textPrimary),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: TextField(
           controller: _searchController,
-          style: const TextStyle(color: Colors.white),
+          autofocus: true,
+          style: const TextStyle(color: SignalColors.textPrimary, fontSize: 16),
           decoration: const InputDecoration(
-            hintText: "Пошук користувачів...",
-            hintStyle: TextStyle(color: Colors.white54),
+            hintText: 'Пошук користувачів...',
+            hintStyle: TextStyle(color: SignalColors.textSecondary),
             border: InputBorder.none,
+            isDense: true,
           ),
           onSubmitted: _searchUsers,
+          onChanged: (val) {
+            if (val.length >= 2) _searchUsers(val);
+          },
         ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.search),
+            icon: const Icon(Icons.search, color: SignalColors.textPrimary),
             onPressed: () => _searchUsers(_searchController.text),
           ),
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(color: SignalColors.primary),
+            )
+          : _results.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(
+                    Icons.search,
+                    size: 56,
+                    color: SignalColors.textDisabled,
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    'Почніть вводити нікнейм',
+                    style: TextStyle(
+                      color: SignalColors.textSecondary,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
+              ),
+            )
           : ListView.builder(
-              itemCount: _searchResults.length,
-              itemBuilder: (context, index) {
-                final user = _searchResults[index];
+              itemCount: _results.length,
+              itemBuilder: (context, i) {
+                final user = _results[i];
+                final username = user['username'] as String;
+                final avatarUrl = user['avatarUrl'] as String?;
+                final colors = SignalColors.avatarColorsFor(username);
+
                 return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   leading: CircleAvatar(
-                    backgroundImage: user['avatarUrl'] != null
-                        ? NetworkImage(user['avatarUrl'])
+                    radius: 24,
+                    backgroundColor: colors[0],
+                    backgroundImage: avatarUrl != null
+                        ? NetworkImage(avatarUrl)
                         : null,
-                    child: user['avatarUrl'] == null
-                        ? Text(user['username'][0].toUpperCase())
+                    child: avatarUrl == null
+                        ? Text(
+                            username.isNotEmpty
+                                ? username[0].toUpperCase()
+                                : '?',
+                            style: TextStyle(
+                              color: colors[1],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          )
                         : null,
                   ),
                   title: Text(
-                    user['username'],
-                    style: const TextStyle(color: Colors.white),
+                    username,
+                    style: const TextStyle(
+                      color: SignalColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  onTap: () => _startChat(user['username'], user['avatarUrl']),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: SignalColors.textDisabled,
+                  ),
+                  onTap: () => _startChat(username),
                 );
               },
             ),
