@@ -13,18 +13,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'animated_widgets.dart';
+import 'firebase_options.dart';
 import 'package:vibration/vibration.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'audio_player_widget.dart';
 import 'home_screen.dart';
+import 'signal_context_menu.dart';
+import 'theme.dart';
 
-// ==========================================
-// 🎨 НАЛАШТУВАННЯ КОЛЬОРІВ ТА СЕРВЕРА
-// ==========================================
 const String serverUrl = 'https://pproject-y.onrender.com';
+
+// Глобальний флаг доступності Firebase (false на Windows без firebase_options.dart)
+bool firebaseAvailable = false;
 
 class AppColors {
   static const Color mainColor = Color(0xFF3A76F0);
@@ -44,23 +46,30 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-    ),
+    const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
   );
 
-  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+  if (!kIsWeb && !Platform.isWindows) {
+    // ⚠️ cloud_firestore не підтримує Windows нативно, тому пропускаємо Firebase на Windows.
+    // На Windows месенджер використовує Socket.IO для отримання повідомлень.
     try {
-      await Firebase.initializeApp();
-      FirebaseMessaging.onBackgroundMessage(
-        _firebaseMessagingBackgroundHandler,
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
       );
-      print("✅ Firebase Mobile Init OK");
+      if (Platform.isAndroid || Platform.isIOS) {
+        FirebaseMessaging.onBackgroundMessage(
+          _firebaseMessagingBackgroundHandler,
+        );
+      }
+      firebaseAvailable = true;
+      print("✅ Firebase Init OK");
     } catch (e) {
+      firebaseAvailable = false;
       print("❌ Firebase Init Error: $e");
+      print(
+        "💡 Запустіть: flutterfire configure --platforms=windows,android,ios",
+      );
     }
   }
 
@@ -85,16 +94,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Glass Messenger',
-      theme: ThemeData.dark().copyWith(
-        primaryColor: AppColors.mainColor,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        colorScheme: const ColorScheme.dark(
-          primary: AppColors.mainColor,
-          secondary: Colors.blueAccent,
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.getTheme(true),
       home: initialScreen,
     );
   }
@@ -128,10 +128,7 @@ class GlassBox extends StatelessWidget {
             borderRadius: BorderRadius.circular(borderRadius),
             border:
                 border ??
-                Border.all(
-                  color: const Color.fromARGB(255, 0, 0, 0).withOpacity(0.1),
-                  width: 0.3,
-                ),
+                Border.all(color: Colors.white.withOpacity(0.1), width: 0.3),
           ),
           child: child,
         ),
@@ -388,6 +385,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _hasText = false;
 
+  // Signal Context Menu — GlobalKeys per message
+  final Map<String, GlobalKey> _messageKeys = {};
+
+  // 🖥️ Локальний список повідомлень для Windows (де Firestore недоступний)
+  // На Android/iOS використовується Firestore StreamBuilder
+  final List<Map<String, dynamic>> _localMessages = [];
+
   @override
   void initState() {
     super.initState();
@@ -529,6 +533,72 @@ class _ChatScreenState extends State<ChatScreen> {
       print('✅ Connected to server');
       // 🔥 ВХІД В КІМНАТУ
       socket.emit('join_chat', widget.chatId);
+      // 🖥️ Для Windows завантажуємо історію через Socket.IO (Firestore недоступний)
+      if (!firebaseAvailable) {
+        socket.emit('request_history', widget.chatId);
+      }
+    });
+
+    // 🖥️ Отримання повідомлень через Socket.IO (головним чином для Windows)
+    // На Android/iOS Firestore StreamBuilder оновлюється автоматично.
+    // Але слухаємо і на мобільних — як fallback для моментального відображення.
+    socket.on('receive_message', (data) {
+      if (!mounted) return;
+      final msg = Map<String, dynamic>.from(data as Map);
+
+      if (!firebaseAvailable) {
+        // Windows: додаємо повідомлення в локальний список
+        setState(() => _localMessages.insert(0, msg));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+    });
+
+    // 🖥️ Завантаження історії для Windows
+    socket.on('load_history', (data) {
+      if (!firebaseAvailable && mounted) {
+        final list = (data as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        setState(() {
+          _localMessages.clear();
+          // Реверс: ListView reverse:true, тому новіші першими (index 0)
+          _localMessages.addAll(list.reversed);
+        });
+      }
+    });
+
+    // 🖥️ Видалення повідомлення (Windows)
+    socket.on('message_deleted', (messageId) {
+      if (!firebaseAvailable && mounted) {
+        setState(() => _localMessages.removeWhere((m) => m['id'] == messageId));
+      }
+    });
+
+    // 🖥️ Редагування повідомлення (Windows)
+    socket.on('message_edited', (data) {
+      if (!firebaseAvailable && mounted) {
+        final d = Map<String, dynamic>.from(data as Map);
+        setState(() {
+          final idx = _localMessages.indexWhere(
+            (m) => m['id'] == d['messageId'],
+          );
+          if (idx != -1) {
+            _localMessages[idx] = {
+              ..._localMessages[idx],
+              'text': d['newText'],
+              'edited': true,
+            };
+          }
+        });
+      }
     });
 
     socket.on('display_typing', (data) {
@@ -874,143 +944,192 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _showContextMenu(BuildContext context, Map message) {
     final isMe = message['sender'] == myName;
-    final isText = message['type'] != 'image' && message['type'] != 'voice';
+    final msgId = message['id'] as String? ?? '';
+    final key = _messageKeys[msgId];
 
+    if (key != null && key.currentContext != null) {
+      final messageCopy = MessageBubble(
+        text: message['type'] == 'image' || message['type'] == 'voice'
+            ? ''
+            : (message['text'] ?? ''),
+        imageUrl: message['type'] == 'image' ? message['text'] : null,
+        audioUrl: message['audioUrl'],
+        audioDuration: message['audioDuration'],
+        sender: message['sender'] ?? 'Anon',
+        isMe: isMe,
+        timestamp: message['timestamp'],
+        isRead: message['read'] == true,
+        replyTo: message['replyTo'],
+        reactions: message['reactions'],
+        messageId: msgId,
+        currentUsername: myName,
+        onReactionTap: _addReaction,
+        edited: message['edited'] == true,
+      );
+
+      SignalContextMenu.show(
+        context,
+        messageKey: key,
+        messageChild: messageCopy,
+        isMe: isMe,
+        onReactionTap: (emoji) => _addReaction(msgId, emoji),
+        onActionTap: (action) {
+          switch (action) {
+            case 'reply':
+              _setReplyTo(message);
+              break;
+            case 'copy':
+              Clipboard.setData(ClipboardData(text: message['text'] ?? ''));
+              break;
+            case 'edit':
+              if (isMe) _startEditingMessage(message);
+              break;
+            case 'delete':
+              _showDeleteConfirmDialog(msgId);
+              break;
+          }
+        },
+      );
+      return;
+    }
+
+    // Fallback if key not ready
+    final isText = message['type'] != 'image' && message['type'] != 'voice';
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2a2d3a),
-                    borderRadius: BorderRadius.circular(32),
-                    border: Border.all(color: Colors.white.withOpacity(0.07)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...['❤️', '👍', '👎', '😂', '😮', '😢'].map(
-                        (emoji) => GestureDetector(
-                          onTap: () {
-                            Navigator.of(ctx).pop();
-                            _addReaction(message['id'], emoji);
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: Text(
-                              emoji,
-                              style: const TextStyle(fontSize: 26),
-                            ),
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          showDialog(
-                            context: context,
-                            builder: (_) => AlertDialog(
-                              backgroundColor: const Color(0xFF2a2d3a),
-                              content: ReactionPicker(
-                                onReactionSelected: (emoji) {
-                                  Navigator.of(context).pop();
-                                  _addReaction(message['id'], emoji);
-                                },
+      builder: (ctx) => DefaultTextStyle(
+        // ← Скидаємо успадкований TextDecoration.underline з теми
+        style: const TextStyle(
+          decoration: TextDecoration.none,
+          color: Colors.white,
+          fontFamily: 'Roboto',
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2a2d3a),
+                      borderRadius: BorderRadius.circular(32),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: ['❤️', '👍', '👎', '😂', '😮', '😢']
+                          .map(
+                            (emoji) => GestureDetector(
+                              onTap: () {
+                                Navigator.of(ctx).pop();
+                                _addReaction(msgId, emoji);
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                child: Text(
+                                  emoji,
+                                  style: const TextStyle(
+                                    fontSize: 26,
+                                    decoration: TextDecoration
+                                        .none, // ← фікс жовтого підкреслення
+                                  ),
+                                ),
                               ),
                             ),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.more_horiz,
-                            color: Colors.white70,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                    ],
+                          )
+                          .toList(),
+                    ),
                   ),
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2a2d3a),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withOpacity(0.07)),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _menuItem(
-                        ctx,
-                        icon: Icons.reply_outlined,
-                        label: 'Відповісти',
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _setReplyTo(message);
-                        },
-                      ),
-                      _menuDivider(),
-                      if (isText) ...[
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2a2d3a),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                         _menuItem(
                           ctx,
-                          icon: Icons.copy_outlined,
-                          label: 'Копіювати',
+                          icon: Icons.reply_outlined,
+                          label: 'Відповісти',
                           onTap: () {
-                            Clipboard.setData(
-                              ClipboardData(text: message['text'] ?? ''),
+                            Navigator.of(ctx).pop();
+                            Future.delayed(
+                              const Duration(milliseconds: 300),
+                              () {
+                                if (mounted) _setReplyTo(message);
+                              },
                             );
-                            Navigator.of(ctx).pop();
                           },
                         ),
                         _menuDivider(),
-                      ],
-                      if (isMe && isText) ...[
+                        if (isText) ...[
+                          _menuItem(
+                            ctx,
+                            icon: Icons.copy_outlined,
+                            label: 'Копіювати',
+                            onTap: () {
+                              Clipboard.setData(
+                                ClipboardData(text: message['text'] ?? ''),
+                              );
+                              Navigator.of(ctx).pop();
+                            },
+                          ),
+                          _menuDivider(),
+                        ],
+                        if (isMe && isText) ...[
+                          _menuItem(
+                            ctx,
+                            icon: Icons.edit_outlined,
+                            label: 'Редагувати',
+                            onTap: () {
+                              Navigator.of(ctx).pop();
+                              Future.delayed(
+                                const Duration(milliseconds: 300),
+                                () {
+                                  if (mounted) _startEditingMessage(message);
+                                },
+                              );
+                            },
+                          ),
+                          _menuDivider(),
+                        ],
                         _menuItem(
                           ctx,
-                          icon: Icons.edit_outlined,
-                          label: 'Редагувати',
+                          icon: Icons.delete_outline,
+                          label: 'Видалити',
+                          color: Colors.redAccent,
                           onTap: () {
                             Navigator.of(ctx).pop();
-                            _startEditingMessage(message);
+                            // Future.delayed надійніше за addPostFrameCallback після анімації закриття
+                            Future.delayed(
+                              const Duration(milliseconds: 300),
+                              () {
+                                if (mounted) _showDeleteConfirmDialog(msgId);
+                              },
+                            );
                           },
                         ),
-                        _menuDivider(),
                       ],
-                      _menuItem(
-                        ctx,
-                        icon: Icons.delete_outline,
-                        label: 'Видалити',
-                        color: Colors.redAccent,
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _showDeleteConfirmDialog(message['id']);
-                        },
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          ), // SafeArea
+        ), // Material
+      ), // DefaultTextStyle
     );
   }
 
@@ -1030,7 +1149,14 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(width: 16),
-            Text(label, style: TextStyle(color: color, fontSize: 16)),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 16,
+                decoration: TextDecoration.none,
+              ),
+            ),
           ],
         ),
       ),
@@ -1121,6 +1247,7 @@ class _ChatScreenState extends State<ChatScreen> {
         child: GlassBox(
           blur: 15,
           opacity: 1.0,
+          border: const Border(),
           child: AppBar(
             backgroundColor: const Color.fromARGB(
               255,
@@ -1169,14 +1296,20 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Positioned.fill(
               child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('chats')
-                    .doc(widget.chatId)
-                    .collection('messages')
-                    .orderBy('timestamp', descending: true)
-                    .limit(50) // 🔥 ВАЖЛИВО: Ліміт, щоб не зависало
-                    .snapshots(),
+                stream: firebaseAvailable
+                    ? FirebaseFirestore.instance
+                          .collection('chats')
+                          .doc(widget.chatId)
+                          .collection('messages')
+                          .orderBy('timestamp', descending: true)
+                          .limit(50)
+                          .snapshots()
+                    : const Stream.empty(),
                 builder: (context, snapshot) {
+                  // 🖥️ Windows: показуємо повідомлення з локального списку (Socket.IO)
+                  if (!firebaseAvailable) {
+                    return _buildMessagesList(_localMessages);
+                  }
                   if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
                   }
@@ -1188,91 +1321,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     return data;
                   }).toList();
 
-                  return ListView.builder(
-                    controller: _scrollController,
-                    reverse: true,
-                    padding: EdgeInsets.only(
-                      left: 16,
-                      right: 16,
-                      top: 100,
-                      bottom:
-                          160 +
-                          MediaQuery.of(context).padding.bottom +
-                          (_replyToMessageId != null ? 60 : 0) +
-                          (_isEditing ? 60 : 0) +
-                          (_isRecording ? 55 : 0) +
-                          (_showVoiceConfirm ? 70 : 0),
-                    ),
-                    itemCount:
-                        messages.length +
-                        (_isTyping && _typingUser != null ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      final hasTyping = _isTyping && _typingUser != null;
-
-                      if (hasTyping && index == 0) {
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: TypingIndicator(username: _typingUser!),
-                        );
-                      }
-
-                      final msgIndex = hasTyping ? index - 1 : index;
-                      final msg = messages[msgIndex];
-                      final isMe = msg['sender'] == myName;
-
-                      bool showDateSeparator = false;
-                      if (msgIndex == messages.length - 1) {
-                        showDateSeparator = true;
-                      } else {
-                        final currentDate = _parseDate(msg['timestamp']);
-                        final prevDate = _parseDate(
-                          messages[msgIndex + 1]['timestamp'],
-                        );
-                        showDateSeparator = !_isSameDay(currentDate, prevDate);
-                      }
-                      final dateLabel = _getDateLabel(
-                        _parseDate(msg['timestamp']),
-                      );
-
-                      return Column(
-                        children: [
-                          if (showDateSeparator) DateSeparator(date: dateLabel),
-                          SwipeToReply(
-                            onReply: () => _setReplyTo(msg),
-                            replyIconColor: Colors.white,
-                            child: GestureDetector(
-                              onLongPress: () => _showContextMenu(context, msg),
-                              child: AnimatedMessageBubble(
-                                isMe: isMe,
-                                child: MessageBubble(
-                                  text:
-                                      msg['type'] == 'image' ||
-                                          msg['type'] == 'voice'
-                                      ? ''
-                                      : (msg['text'] ?? ''),
-                                  imageUrl: msg['type'] == 'image'
-                                      ? msg['text']
-                                      : null,
-                                  audioUrl: msg['audioUrl'],
-                                  audioDuration: msg['audioDuration'],
-                                  sender: msg['sender'] ?? 'Anon',
-                                  isMe: isMe,
-                                  timestamp: msg['timestamp'],
-                                  isRead: msg['read'] == true,
-                                  replyTo: msg['replyTo'],
-                                  reactions: msg['reactions'],
-                                  messageId: msg['id'],
-                                  currentUsername: myName,
-                                  onReactionTap: _addReaction,
-                                  edited: msg['edited'] == true,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  );
+                  return _buildMessagesList(messages);
                 },
               ),
             ),
@@ -1280,6 +1329,95 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  // 💬 Будує список повідомлень — використовується і Firestore (мобільні),
+  // і локальним Socket.IO списком (Windows).
+  Widget _buildMessagesList(List<Map<String, dynamic>> messages) {
+    return ListView.builder(
+      controller: _scrollController,
+      reverse: true,
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 100,
+        bottom:
+            160 +
+            MediaQuery.of(context).padding.bottom +
+            (_replyToMessageId != null ? 60 : 0) +
+            (_isEditing ? 60 : 0) +
+            (_isRecording ? 55 : 0) +
+            (_showVoiceConfirm ? 70 : 0),
+      ),
+      itemCount: messages.length + (_isTyping && _typingUser != null ? 1 : 0),
+      itemBuilder: (context, index) {
+        final hasTyping = _isTyping && _typingUser != null;
+
+        if (hasTyping && index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: TypingIndicator(username: _typingUser!),
+          );
+        }
+
+        final msgIndex = hasTyping ? index - 1 : index;
+        final msg = messages[msgIndex];
+        final isMe = msg['sender'] == myName;
+
+        bool showDateSeparator = false;
+        if (msgIndex == messages.length - 1) {
+          showDateSeparator = true;
+        } else {
+          final currentDate = _parseDate(msg['timestamp']);
+          final prevDate = _parseDate(messages[msgIndex + 1]['timestamp']);
+          showDateSeparator = !_isSameDay(currentDate, prevDate);
+        }
+        final dateLabel = _getDateLabel(_parseDate(msg['timestamp']));
+
+        return Column(
+          children: [
+            if (showDateSeparator) DateSeparator(date: dateLabel),
+            SwipeToReply(
+              onReply: () => _setReplyTo(msg),
+              replyIconColor: Colors.white,
+              child: Builder(
+                builder: (ctx) {
+                  final msgId = msg['id'] as String? ?? '';
+                  final key = _messageKeys.putIfAbsent(
+                    msgId,
+                    () => GlobalKey(),
+                  );
+                  return GestureDetector(
+                    onLongPress: () => _showContextMenu(context, msg),
+                    child: Container(
+                      key: key,
+                      child: MessageBubble(
+                        text: msg['type'] == 'image' || msg['type'] == 'voice'
+                            ? ''
+                            : (msg['text'] ?? ''),
+                        imageUrl: msg['type'] == 'image' ? msg['text'] : null,
+                        audioUrl: msg['audioUrl'],
+                        audioDuration: msg['audioDuration'],
+                        sender: msg['sender'] ?? 'Anon',
+                        isMe: isMe,
+                        timestamp: msg['timestamp'],
+                        isRead: msg['read'] == true,
+                        replyTo: msg['replyTo'],
+                        reactions: msg['reactions'],
+                        messageId: msgId,
+                        currentUsername: myName,
+                        onReactionTap: _addReaction,
+                        edited: msg['edited'] == true,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1899,7 +2037,13 @@ class ReactionPicker extends StatelessWidget {
                   onTap: () => onReactionSelected(emoji),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                    child: Text(
+                      emoji,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
                   ),
                 ),
               )
@@ -1945,7 +2089,13 @@ class ReactionsDisplay extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(emoji, style: const TextStyle(fontSize: 14)),
+                  Text(
+                    emoji,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   if (users.length > 1) ...[
                     const SizedBox(width: 3),
                     Text(
@@ -1954,6 +2104,7 @@ class ReactionsDisplay extends StatelessWidget {
                         fontSize: 11,
                         color: Colors.white70,
                         fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.none,
                       ),
                     ),
                   ],
