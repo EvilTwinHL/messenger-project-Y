@@ -601,6 +601,27 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
+    // 🖥️ Оновлення реакцій (Windows) — без цього реакції видно тільки після перезавантаження
+    socket.on('reaction_updated', (data) {
+      if (!firebaseAvailable && mounted) {
+        final d = Map<String, dynamic>.from(data as Map);
+        final msgId = d['messageId'] as String?;
+        final reactions = d['reactions'];
+        if (msgId == null) return;
+        setState(() {
+          final idx = _localMessages.indexWhere((m) => m['id'] == msgId);
+          if (idx != -1) {
+            _localMessages[idx] = {
+              ..._localMessages[idx],
+              'reactions': reactions != null
+                  ? Map<String, dynamic>.from(reactions as Map)
+                  : null,
+            };
+          }
+        });
+      }
+    });
+
     socket.on('display_typing', (data) {
       if (mounted && data['username'] != myName) {
         setState(() {
