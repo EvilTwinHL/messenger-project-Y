@@ -454,6 +454,46 @@ io.on('connection', async (socket) => {
     });
 });
 
+// ==========================================
+// 🖥️ 6. СПИСОК ЧАТІВ (для Windows клієнта, де Firestore недоступний)
+// ==========================================
+app.get('/get_user_chats', async (req, res) => {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ error: "No username" });
+
+    try {
+        const snapshot = await db.collection('chats')
+            .where('participants', 'array-contains', username)
+            .get();
+
+        const chats = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            // Конвертуємо Firestore Timestamp у рядок для JSON
+            createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || null,
+            lastMessage: doc.data().lastMessage ? {
+                ...doc.data().lastMessage,
+                // timestamp вже рядок (ми зберігаємо як ISO string)
+            } : null,
+        }));
+
+        // Сортуємо: новіші спочатку
+        chats.sort((a, b) => {
+            const aTs = a.lastMessage?.timestamp;
+            const bTs = b.lastMessage?.timestamp;
+            if (!aTs && !bTs) return 0;
+            if (!aTs) return 1;
+            if (!bTs) return -1;
+            return new Date(bTs) - new Date(aTs);
+        });
+
+        res.json(chats);
+    } catch (e) {
+        console.error("Get chats error:", e);
+        res.status(500).json({ error: "Failed to get chats" });
+    }
+});
+
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
