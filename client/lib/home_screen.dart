@@ -104,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 _buildChatsTab(),
                 _buildContactsTab(),
-                const SettingsScreen(),
+                SettingsScreen(username: widget.myUsername),
                 _buildAccountTab(),
               ],
             ),
