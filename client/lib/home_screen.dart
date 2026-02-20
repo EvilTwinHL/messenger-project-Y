@@ -7,6 +7,7 @@ import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'main.dart';
 import 'theme.dart';
+import 'login_screen.dart'; // ← ДОДАТИ
 
 class HomeScreen extends StatefulWidget {
   final String myUsername;
