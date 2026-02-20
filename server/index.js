@@ -210,10 +210,13 @@ app.post('/get_or_create_dm', async (req, res) => {
 // ==========================================
 
 const server = http.createServer(app);
-const io = new Server(server, { 
-    cors: { origin: "*" },
-    maxHttpBufferSize: 6e7 // 10 MB
+const io = new Server(server, {
+  cors: { origin: "*" },
+  maxHttpBufferSize: 1e7, // 10MB (було 60MB)
+  pingTimeout: 60000,    // + стабільніший keepalive
+  pingInterval: 25000,
 });
+
 
 const PORT = process.env.PORT || 3000;
 
@@ -521,9 +524,27 @@ app.get('/get_user_chats', async (req, res) => {
     }
 });
 
+
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
+
+// ✅ ДОДАТИ — Graceful shutdown
+const shutdown = () => {
+  console.log('Shutting down gracefully...');
+  io.close(() => {
+    server.close(() => {
+      console.log('Server closed.');
+      process.exit(0);
+    });
+  });
+  // Force exit після 10 секунд
+  setTimeout(() => process.exit(1), 10000);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown); // Ctrl+C
+
 
 // NEW 18.02.2026 add 'rooms' and 'DM'
 //---BackUp//
