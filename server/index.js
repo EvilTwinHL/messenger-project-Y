@@ -343,26 +343,53 @@ io.on('connection', async (socket) => {
         // Г) Відправляємо ТІЛЬКИ в цю кімнату (chatId)
         io.to(chatId).emit('receive_message', savedMessage); 
 
-        // Д) ВІДПРАВЛЯЄМО ПУШ-СПОВІЩЕННЯ
-        try {
-            const tokensSnapshot = await db.collection('fcm_tokens').get();
-            const tokens = tokensSnapshot.docs
-                .filter(doc => doc.data().username !== sender)
-                .map(doc => doc.id);
 
-            if (tokens.length > 0) {
-                const payload = {
-                    notification: {
-                        title: `Нове від ${sender}`,
-                        body: type === 'image' ? '📷 Фото' : (type === 'voice' ? '🎤 Голосове' : text),
-                    },
-                    tokens: tokens,
-                };
-                await admin.messaging().sendEachForMulticast(payload);
-            }
-        } catch (error) {
-            console.error("Помилка розсилки пушів:", error);
-        }
+        // Д) ВІДПРАВЛЯЄМО ПУШ — тільки учасникам
+try {
+  // Отримуємо учасників чату
+  const chatDoc = await db
+    .collection("chats").doc(chatId).get();
+  const participants =
+    chatDoc.data()?.participants || [];
+  const recipients = participants
+    .filter(u => u !== sender);
+
+  if (recipients.length === 0) return;
+
+  // Беремо токени тільки цих юзерів
+  const tokensSnap = await db
+    .collection("fcm_tokens")
+    .where("username", "in", recipients)
+    .get();
+  const tokens = tokensSnap.docs
+    .map(doc => doc.id);
+
+  if (tokens.length > 0) {
+    const payload = {
+      notification: {
+        title: `Нове від ${sender}`,
+        body: type==="image"?"📷 Фото"
+          :type==="voice"?"🎤 Голосове":text,
+      },
+      data: { chatId, sender },
+      tokens,
+    };
+    const result = await admin.messaging()
+      .sendEachForMulticast(payload);
+    // Видаляємо невалідні токени
+    result.responses.forEach((r,i) => {
+      if(!r.success &&
+        r.error?.code===
+        "messaging/registration-token-not-registered"){
+        db.collection("fcm_tokens")
+          .doc(tokens[i]).delete();
+      }
+    });
+  }
+} catch (error) {
+  console.error("Помилка пушів:", error);
+}
+
     });
 
     // --- 6. ІНДИКАТОР НАБОРУ (В КІМНАТУ) ---
