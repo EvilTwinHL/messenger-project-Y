@@ -32,6 +32,7 @@ import 'widgets/reply_preview.dart';
 import 'utils/date_utils.dart' as AppDate;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/app_config.dart';
+import 'services/auth_service.dart';
 
 // Глобальний флаг доступності Firebase (false на Windows без firebase_options.dart)
 //bool firebaseAvailable = false;
@@ -275,8 +276,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void initSocket() {
-    _socketSvc.init();
+  Future<void> initSocket() async {
+    final token = await AuthService.getToken();
+    _socketSvc.init(token: token ?? '');
     _socketSvc.connect();
 
     _socketSvc.onConnect((_) {

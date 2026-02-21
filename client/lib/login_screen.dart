@@ -1,13 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http_mp;
 import 'package:image_picker/image_picker.dart';
-import 'main.dart';
 import 'home_screen.dart';
 import 'theme.dart';
 import 'config/app_config.dart';
+import 'services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,10 +16,18 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController _usernameController = TextEditingController();
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _obscurePassword = true;
   File? _avatarFile;
-  String? _uploadedAvatarUrl;
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
@@ -33,67 +40,89 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _login() async {
     final username = _usernameController.text.trim();
-    if (username.isEmpty) return;
+    final password = _passwordController.text;
+
+    if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Введіть нікнейм та пароль')),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
+      // Спочатку завантажуємо аватар якщо є
+      String? uploadedAvatarUrl;
       if (_avatarFile != null) {
-        var request = http.MultipartRequest(
-          'POST',
-          Uri.parse('${AppConfig.serverUrl}/upload'),
-        );
-        request.files.add(
-          await http.MultipartFile.fromPath('image', _avatarFile!.path),
-        );
-        var response = await request.send();
-        if (response.statusCode == 200) {
-          var json = jsonDecode(await response.stream.bytesToString());
-          _uploadedAvatarUrl = json['url'];
+        // Завантаження без JWT (аватар при реєстрації — окремий випадок)
+        // Тимчасово використовуємо http напряму для upload під час реєстрації
+        final token = await AuthService.getToken();
+        if (token != null) {
+          // Якщо вже є токен — завантажуємо з ним
+          uploadedAvatarUrl = await _uploadAvatar(token);
         }
+        // Якщо токена немає (перша реєстрація) — аватар завантажимо після входу
       }
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.serverUrl}/auth'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'avatarUrl': _uploadedAvatarUrl,
-        }),
+      final data = await AuthService.login(
+        username: username,
+        password: password,
+        avatarUrl: uploadedAvatarUrl,
       );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final finalAvatarUrl = data['user']['avatarUrl'];
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('username', username);
-        if (finalAvatarUrl != null)
-          await prefs.setString('avatarUrl', finalAvatarUrl);
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                HomeScreen(myUsername: username, myAvatarUrl: finalAvatarUrl),
-          ),
-        );
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Помилка входу')));
+      // Якщо аватар не завантажено до входу — завантажуємо тепер з токеном
+      if (_avatarFile != null && uploadedAvatarUrl == null) {
+        final token = await AuthService.getToken();
+        if (token != null) {
+          uploadedAvatarUrl = await _uploadAvatar(token);
+          // Оновлюємо локально
+          await AuthService.saveUser(
+            username: username,
+            avatarUrl: uploadedAvatarUrl,
+          );
         }
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Помилка: $e')));
-      }
+
+      final finalAvatarUrl = uploadedAvatarUrl ?? data['user']['avatarUrl'];
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              HomeScreen(myUsername: username, myAvatarUrl: finalAvatarUrl),
+        ),
+      );
+    } on Exception catch (e) {
+      if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: SignalColors.danger),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<String?> _uploadAvatar(String token) async {
+    try {
+      final request = http_mp.MultipartRequest(
+        'POST',
+        Uri.parse('${AppConfig.serverUrl}/upload'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(
+        await http_mp.MultipartFile.fromPath('image', _avatarFile!.path),
+      );
+      final response = await request.send();
+      if (response.statusCode == 200) {
+        final body = await response.stream.bytesToString();
+        final json = jsonDecode(body);
+        return json['url'] as String?;
+      }
+    } catch (_) {}
+    return null;
   }
 
   @override
@@ -106,11 +135,11 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Logo / Icon
+              // Logo
               Container(
                 width: 72,
                 height: 72,
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: SignalColors.primary,
                   shape: BoxShape.circle,
                 ),
@@ -176,7 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Додати фото',
+                'Додати фото (необов\'язково)',
                 style: TextStyle(
                   color: SignalColors.textSecondary,
                   fontSize: 12,
@@ -185,44 +214,43 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 28),
 
               // Username field
-              TextField(
+              _buildTextField(
                 controller: _usernameController,
-                style: const TextStyle(
-                  color: SignalColors.textPrimary,
-                  fontSize: 15,
-                ),
-                decoration: InputDecoration(
-                  labelText: 'Ваш нікнейм',
-                  labelStyle: const TextStyle(
+                label: 'Нікнейм (3–20 символів, тільки a-z, 0-9)',
+                icon: Icons.person_outline,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              ),
+              const SizedBox(height: 16),
+
+              // Password field
+              _buildTextField(
+                controller: _passwordController,
+                label: 'Пароль (мінімум 8 символів)',
+                icon: Icons.lock_outline,
+                obscureText: _obscurePassword,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
                     color: SignalColors.textSecondary,
+                    size: 20,
                   ),
-                  filled: true,
-                  fillColor: SignalColors.surface,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: SignalColors.divider),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: SignalColors.divider),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: SignalColors.primary,
-                      width: 1.5,
-                    ),
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.person_outline,
-                    color: SignalColors.textSecondary,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
                 onSubmitted: (_) => _login(),
+              ),
+              const SizedBox(height: 12),
+
+              // Підказка
+              const Text(
+                'Якщо акаунту немає — він буде створений автоматично',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: SignalColors.textSecondary,
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(height: 24),
 
@@ -235,6 +263,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: SignalColors.primary,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: SignalColors.primary.withOpacity(
+                      0.5,
+                    ),
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -250,11 +281,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         )
                       : const Text(
-                          'УВІЙТИ',
+                          'УВІЙТИ / ЗАРЕЄСТРУВАТИСЬ',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            letterSpacing: 1.1,
-                            fontSize: 15,
+                            letterSpacing: 0.8,
+                            fontSize: 14,
                           ),
                         ),
                 ),
@@ -263,6 +294,49 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool obscureText = false,
+    Widget? suffixIcon,
+    void Function(String)? onSubmitted,
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: obscureText,
+      style: const TextStyle(color: SignalColors.textPrimary, fontSize: 15),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(
+          color: SignalColors.textSecondary,
+          fontSize: 13,
+        ),
+        filled: true,
+        fillColor: SignalColors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: SignalColors.divider),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: SignalColors.divider),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: SignalColors.primary, width: 1.5),
+        ),
+        prefixIcon: Icon(icon, color: SignalColors.textSecondary),
+        suffixIcon: suffixIcon,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
+      ),
+      onSubmitted: onSubmitted,
     );
   }
 }

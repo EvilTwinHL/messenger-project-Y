@@ -2,7 +2,7 @@
   description: "A new Flutter project."
   publish_to: 'none'
 
-  version: 2.3.6+1
+  version: 2.4.0+1
 
   environment:
     sdk: ^3.10.8
@@ -28,6 +28,7 @@
     audio_waveforms: ^2.0.2
     just_audio: ^0.9.43
     flutter_dotenv: ^5.1.0
+    dio: ^5.4.0
     
     
 

@@ -11,12 +11,14 @@ class SocketService {
   IO.Socket get socket => _socket;
   bool get isConnected => _socket.connected;
 
-  void init() {
+  /// [token] — JWT токен з AuthService.getToken()
+  void init({required String token}) {
     _socket = IO.io(
       AppConfig.serverUrl,
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
+          .setAuth({'token': token}) // 🔐 JWT передається тут
           .build(),
     );
   }
@@ -26,7 +28,6 @@ class SocketService {
 
   // ── Кімнати ──────────────────────────────
   void joinChat(String chatId) => _socket.emit('join_chat', chatId);
-
   void leaveChat(String chatId) => _socket.emit('leave_chat', chatId);
 
   // ── Повідомлення ─────────────────────────
@@ -72,7 +73,7 @@ class SocketService {
 
   void requestHistory(String chatId) => _socket.emit('request_history', chatId);
 
-  // ── Слухачі (делегуємо до socket) ────────
+  // ── Слухачі ───────────────────────────────
   void on(String event, dynamic Function(dynamic) handler) =>
       _socket.on(event, handler);
 
