@@ -34,6 +34,7 @@ const app = express();
 app.use(helmet());
 app.use(morgan('combined'));
 app.use(cors());
+app.set('trust proxy', 1);
 app.use(express.json());
 
 // ==========================================
