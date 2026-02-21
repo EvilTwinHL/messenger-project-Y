@@ -387,10 +387,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image == null) return;
     try {
+      final token = await AuthService.getToken();
       var request = http.MultipartRequest(
         'POST',
         Uri.parse('${AppConfig.serverUrl}/upload'),
       );
+      request.headers['Authorization'] = 'Bearer ${token ?? ''}';
       request.files.add(await http.MultipartFile.fromPath('image', image.path));
       var response = await request.send();
       if (response.statusCode == 200) {
@@ -527,10 +529,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final file = File(path);
+      final token = await AuthService.getToken();
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('${AppConfig.serverUrl}/upload-audio'),
       );
+      request.headers['Authorization'] = 'Bearer ${token ?? ''}';
       request.files.add(await http.MultipartFile.fromPath('audio', file.path));
       final response = await request.send();
       final json = jsonDecode(await response.stream.bytesToString());

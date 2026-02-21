@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'main.dart';
 import 'theme.dart';
 import 'config/app_config.dart';
+import 'services/auth_service.dart';
 
 class SearchUserScreen extends StatefulWidget {
   final String myUsername;
@@ -23,10 +24,12 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
     setState(() => _isLoading = true);
 
     try {
+      final token = await AuthService.getToken();
       final response = await http.get(
         Uri.parse(
           '${AppConfig.serverUrl}/search_users?q=$query&myUsername=${widget.myUsername}',
         ),
+        headers: {'Authorization': 'Bearer ${token ?? ''}'},
       );
       if (response.statusCode == 200) {
         setState(() => _results = jsonDecode(response.body));
@@ -40,9 +43,13 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
 
   Future<void> _startChat(String otherUsername) async {
     try {
+      final token = await AuthService.getToken();
       final response = await http.post(
         Uri.parse('${AppConfig.serverUrl}/get_or_create_dm'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${token ?? ''}',
+        },
         body: jsonEncode({
           'myUsername': widget.myUsername,
           'otherUsername': otherUsername,

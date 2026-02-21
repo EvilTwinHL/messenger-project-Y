@@ -10,6 +10,7 @@ import 'theme.dart';
 import 'login_screen.dart'; // ← ДОДАТИ
 import 'utils/date_utils.dart';
 import 'config/app_config.dart';
+import 'services/auth_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final String myUsername;
@@ -35,10 +36,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadWindowsChats() async {
     setState(() => _windowsChatsLoading = true);
     try {
+      final token = await AuthService.getToken();
       final res = await http.get(
         Uri.parse(
           '${AppConfig.serverUrl}/get_user_chats?username=${widget.myUsername}',
         ),
+        headers: {'Authorization': 'Bearer ${token ?? ''}'},
       );
       if (res.statusCode == 200) {
         setState(() {
@@ -55,8 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await AuthService.logout();
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
