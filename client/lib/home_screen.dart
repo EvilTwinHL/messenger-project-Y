@@ -8,6 +8,8 @@ import 'settings_screen.dart';
 import 'main.dart';
 import 'theme.dart';
 import 'login_screen.dart'; // ← ДОДАТИ
+import 'utils/date_utils.dart';
+import 'config/app_config.dart';
 
 class HomeScreen extends StatefulWidget {
   final String myUsername;
@@ -27,14 +29,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    if (!firebaseAvailable) _loadWindowsChats();
+    if (!AppConfig.firebaseAvailable) _loadWindowsChats();
   }
 
   Future<void> _loadWindowsChats() async {
     setState(() => _windowsChatsLoading = true);
     try {
       final res = await http.get(
-        Uri.parse('$serverUrl/get_user_chats?username=${widget.myUsername}'),
+        Uri.parse(
+          '${AppConfig.serverUrl}/get_user_chats?username=${widget.myUsername}',
+        ),
       );
       if (res.statusCode == 200) {
         setState(() {
@@ -58,25 +62,6 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
     );
-  }
-
-  String _formatTime(dynamic ts) {
-    if (ts == null) return '';
-    try {
-      DateTime d;
-      if (ts is Timestamp) {
-        d = ts.toDate();
-      } else if (ts is String) {
-        d = DateTime.parse(ts).toLocal();
-      } else if (ts is int) {
-        d = DateTime.fromMillisecondsSinceEpoch(ts);
-      } else {
-        return '';
-      }
-      return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return '';
-    }
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -183,8 +168,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── CHATS TAB ─────────────────────────────────────────────────────
-  Widget _buildChatsTab() =>
-      firebaseAvailable ? _buildFirestoreChatList() : _buildWindowsChatList();
+  Widget _buildChatsTab() => AppConfig.firebaseAvailable
+      ? _buildFirestoreChatList()
+      : _buildWindowsChatList();
 
   Widget _buildFirestoreChatList() {
     return StreamBuilder<QuerySnapshot>(
@@ -314,7 +300,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ).then((_) {
-            if (!firebaseAvailable) _loadWindowsChats();
+            if (!AppConfig.firebaseAvailable) _loadWindowsChats();
           });
         },
         child: Padding(
@@ -351,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         Text(
-                          _formatTime(lastTs),
+                          ChatDateUtils.formatTime(lastTs),
                           style: const TextStyle(
                             color: SignalColors.textSecondary,
                             fontSize: 12,

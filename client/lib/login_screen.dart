@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'main.dart';
 import 'home_screen.dart';
 import 'theme.dart';
+import 'config/app_config.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -39,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (_avatarFile != null) {
         var request = http.MultipartRequest(
           'POST',
-          Uri.parse('$serverUrl/upload'),
+          Uri.parse('${AppConfig.serverUrl}/upload'),
         );
         request.files.add(
           await http.MultipartFile.fromPath('image', _avatarFile!.path),
@@ -52,7 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final response = await http.post(
-        Uri.parse('$serverUrl/auth'),
+        Uri.parse('${AppConfig.serverUrl}/auth'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'username': username,

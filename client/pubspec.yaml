@@ -2,7 +2,7 @@
   description: "A new Flutter project."
   publish_to: 'none'
 
-  version: 2.3.2+1
+  version: 2.3.6+1
 
   environment:
     sdk: ^3.10.8
@@ -27,6 +27,7 @@
     cloud_firestore: ^6.1.2
     audio_waveforms: ^2.0.2
     just_audio: ^0.9.43
+    flutter_dotenv: ^5.1.0
     
     
 
@@ -42,3 +43,4 @@
     uses-material-design: true
     assets:
       - shorebird.yaml
+      - .env

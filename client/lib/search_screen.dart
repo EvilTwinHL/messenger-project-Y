@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'main.dart';
 import 'theme.dart';
+import 'config/app_config.dart';
 
 class SearchUserScreen extends StatefulWidget {
   final String myUsername;
@@ -24,7 +25,7 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
     try {
       final response = await http.get(
         Uri.parse(
-          '$serverUrl/search_users?q=$query&myUsername=${widget.myUsername}',
+          '${AppConfig.serverUrl}/search_users?q=$query&myUsername=${widget.myUsername}',
         ),
       );
       if (response.statusCode == 200) {
@@ -40,7 +41,7 @@ class _SearchUserScreenState extends State<SearchUserScreen> {
   Future<void> _startChat(String otherUsername) async {
     try {
       final response = await http.post(
-        Uri.parse('$serverUrl/get_or_create_dm'),
+        Uri.parse('${AppConfig.serverUrl}/get_or_create_dm'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'myUsername': widget.myUsername,

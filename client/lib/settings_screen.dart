@@ -31,7 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _updater = ShorebirdUpdater();
   bool _checkingUpdate = false;
   String _updateStatus = '';
-  String _appVersion = '2.3.2';
+  String _appVersion = '2.3.6';
   int? _patchNumber;
 
   @override
@@ -156,10 +156,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'Налаштування',
           style: TextStyle(color: Colors.white, fontSize: 18),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        //leading: IconButton(
+        // icon: const Icon(Icons.arrow_back, color: Colors.white),
+        // onPressed: () => Navigator.pop(context),
+        //),
       ),
       body: ListView(
         children: [

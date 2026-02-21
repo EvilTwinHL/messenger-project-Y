@@ -1,6 +1,6 @@
-# 🗂 MESSENGER Y — PROJECT CONTEXT
+# 🗂 MESSENGER Y — PROJECT CONTEXT v2.3.5
 > Вставляй цей файл першим повідомленням у новому чаті.
-> Після цього додавай лише той файл, з яким зараз працюєш.
+> Після цього додавай ТІЛЬКИ той файл, з яким зараз працюєш.
 
 ---
 
@@ -9,64 +9,89 @@
 | Шар | Технологія |
 |-----|-----------|
 | Клієнт | Flutter 3.x (Android, iOS, Windows) |
-| Сервер | Node.js + Express 5 + Socket.IO 4.8 |
-| БД | Firebase Firestore (підколекції) |
-| Сховище | Firebase Storage (Google Cloud) |
-| Push | FCM multicast |
-| Auth | Нікнейм + аватар (JWT — ще не додано) |
+| Сервер | Node.js 20 + Express 5 + Socket.IO 4.8 |
+| БД | Firebase Firestore |
+| Сховище | Firebase Storage |
+| Push | FCM multicast (фільтр по учасниках ✅) |
+| Auth | Нікнейм + аватар (JWT — Фаза 1, ще не зроблено) |
 | OTA | Shorebird Code Push |
-| Real-time | Socket.IO rooms + Cloud Firestore StreamBuilder |
+| Real-time | Socket.IO rooms + Firestore StreamBuilder |
+| Config | flutter_dotenv (.env файл) |
 
 ---
 
-## 🗂 СТРУКТУРА ФАЙЛІВ
+## 🗂 СТРУКТУРА ФАЙЛІВ (актуальна після рефакторингу)
 
 ```
 client/
+├── .env                           # SERVER_URL=https://pproject-y.onrender.com
+├── pubspec.yaml
 └── lib/
-    ├── main.dart                  # Точка входу, MyApp, ChatScreen, LoginScreen (ПОТРІБНО РОЗБИТИ)
-    ├── home_screen.dart           # HomeScreen, _OvalNavBar, вкладки Чати/Контакти/Налаштування/Акаунт
-    ├── login_screen.dart          # LoginScreen (є дублікат у main.dart — це баг)
-    ├── search_screen.dart         # SearchUserScreen — пошук юзерів, старт DM
-    ├── settings_screen.dart       # SettingsScreen — OTA, профіль, сповіщення, logout
-    ├── signal_context_menu.dart   # SignalContextMenu — overlay з реакціями та діями
-    ├── audio_player_widget.dart   # AudioMessagePlayer — waveform плеєр Signal-стиль
-    ├── voice_recorder.dart        # VoiceRecorder widget — запис з анімацією (окремий файл)
-    └── theme.dart                 # SignalColors, AppSizes, AppTheme — ВСІ токени тут
+    ├── config/
+    │   └── app_config.dart        # AppConfig.serverUrl (з .env) + AppConfig.firebaseAvailable
+    ├── services/
+    │   └── socket_service.dart    # SocketService singleton — всі Socket.IO методи
+    ├── utils/
+    │   └── date_utils.dart        # ChatDateUtils: formatTime, dateLabel, parseDate, isSameDay
+    ├── widgets/
+    │   ├── message_bubble.dart    # MessageBubble
+    │   ├── swipe_to_reply.dart    # SwipeToReply
+    │   ├── typing_indicator.dart  # TypingIndicator
+    │   ├── date_separator.dart    # DateSeparator
+    │   ├── reply_preview.dart     # ReplyPreview
+    │   └── reaction_widgets.dart  # ReactionPicker + ReactionsDisplay
+    ├── main.dart                  # MyApp, main(), ChatScreen, AppColors, GlassBox
+    ├── home_screen.dart           # HomeScreen + _OvalNavBar
+    ├── login_screen.dart          # LoginScreen (єдине місце!)
+    ├── search_screen.dart         # SearchUserScreen
+    ├── settings_screen.dart       # SettingsScreen — OTA, logout (без leading у AppBar!)
+    ├── signal_context_menu.dart   # SignalContextMenu overlay
+    ├── audio_player_widget.dart   # AudioMessagePlayer + WaveformPainter
+    ├── voice_recorder.dart        # VoiceRecorder widget
+    └── theme.dart                 # SignalColors, AppSizes, AppTheme
 
 server/
-└── index.js                      # Express + Socket.IO + Firebase Admin — весь сервер в одному файлі
-```
-
-### Що ЩЕ ПОТРІБНО створити (технічний борг):
-```
-client/lib/
-    ├── screens/                   # Перемістити ChatScreen, HomeScreen, LoginScreen сюди
-    ├── widgets/                   # MessageBubble, SwipeToReply, TypingIndicator, DateSeparator
-    ├── services/
-    │   ├── socket_service.dart    # Інкапсулювати Socket.IO логіку
-    │   └── auth_service.dart      # JWT, login, logout, refresh
-    ├── utils/
-    │   └── date_utils.dart        # formatTime() — зараз дублюється у 2 місцях
-    └── config/
-        └── app_config.dart        # serverUrl з .env (зараз hardcode)
+└── index.js                      # Express + Socket.IO + Firebase Admin
 ```
 
 ---
 
-## ⚙️ ВАЖЛИВІ КОНСТАНТИ
+## ⚙️ ВАЖЛИВІ КОНСТАНТИ ТА ПРАВИЛА
 
 ```dart
-// main.dart
-const String serverUrl = 'https://pproject-y.onrender.com';
-bool firebaseAvailable = false; // глобальний флаг — false на Windows
+// config/app_config.dart
+class AppConfig {
+  static String get serverUrl =>
+    dotenv.env['SERVER_URL'] ?? 'https://pproject-y.onrender.com';
+  static bool firebaseAvailable = false; // встановлюється у main()
+}
+
+// main.dart — більше НЕ має:
+// const String serverUrl = '...'   ← ВИДАЛЕНО
+// bool firebaseAvailable = false;  ← ПЕРЕМІЩЕНО в AppConfig
+
+// Використання у файлах:
+// AppConfig.serverUrl              замість старого serverUrl
+// AppConfig.firebaseAvailable      замість старого firebaseAvailable
+
+// date_utils.dart — клас називається ChatDateUtils (НЕ DateUtils!)
+// Причина: конфлікт з вбудованим Flutter DateUtils з material.dart
+// Імпорт: import 'utils/date_utils.dart' as AppDate;
+// Виклик: AppDate.ChatDateUtils.formatTime(ts)
 ```
 
 ```javascript
-// server/index.js
-const PORT = process.env.PORT || 3000;
-const BUCKET_NAME = "project-y-8df27.firebasestorage.app";
-// maxHttpBufferSize: 6e7  ← БАГИ: занадто великий (60MB), треба 10e6
+// server/index.js — ключові налаштування
+const io = new Server(server, {
+  cors: { origin: "*" },
+  maxHttpBufferSize: 1e7,  // 10MB (було 60MB — DoS ризик)
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
+// Graceful shutdown (в кінці файлу)
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 ```
 
 ---
@@ -74,21 +99,24 @@ const BUCKET_NAME = "project-y-8df27.firebasestorage.app";
 ## 🎨 ДИЗАЙН-СИСТЕМА (theme.dart)
 
 ```dart
-// Всі кольори — тільки через SignalColors, не хардкодити
-SignalColors.primary        // #2B5CE6 — акцент, кнопки, активна навігація
+// ЗАВЖДИ використовувати SignalColors і AppSizes — не хардкодити!
+SignalColors.primary        // #2B5CE6 — акцент, кнопки
 SignalColors.appBackground  // #111113 — фон scaffold
 SignalColors.surface        // #1A1B1D — AppBar, картки
-SignalColors.elevated       // #252528 — модали, контекст-меню
+SignalColors.elevated       // #252528 — модали, меню
 SignalColors.outgoing       // #2B5CE6 — мої бульбашки
 SignalColors.incoming       // #2C2C2E — чужі бульбашки
 SignalColors.textPrimary    // #FFFFFF
 SignalColors.textSecondary  // #8E8E9A
+SignalColors.danger         // червоний для помилок/видалення
+SignalColors.online         // зелений для онлайн-статусу
 
-// Всі розміри — тільки через AppSizes
 AppSizes.navBarHeight       // 72
 AppSizes.bubbleRadius       // 18
 AppSizes.avatarRadiusMedium // 27
-// тощо...
+AppSizes.avatarRadiusLarge  // 36
+AppSizes.inputHeight        // мін. висота поля вводу
+AppSizes.actionButtonSize   // кнопка відправки
 ```
 
 ---
@@ -98,62 +126,63 @@ AppSizes.avatarRadiusMedium // 27
 ```
 users/{username}
   username, avatarUrl, createdAt
-  [ПЛАН] passwordHash, bio, links[], online, lastSeen, isPremium
+  [ПЛАН Ф1] passwordHash, bio, online, lastSeen
 
 chats/{chatId}
-  type: "dm" | "group"
+  type: "dm"                        ← групи планується у Фазі 2
   participants: [username1, username2]
   lastMessage: { text, sender, timestamp, read }
-  [ПЛАН] name, avatarUrl, adminUsername (для груп)
-  [ПЛАН] pinnedMessage, autoDeleteAfter
 
 chats/{chatId}/messages/{messageId}
-  text, sender, senderAvatar, type, timestamp, read
+  text, sender, senderAvatar, type  ← "text" | "image" | "voice"
+  timestamp, read, edited, editedAt
   replyTo: { id, text, sender }
   reactions: { "❤️": ["user1"], "👍": ["user2"] }
-  edited, editedAt
-  audioUrl, audioDuration   (для voice)
-  [ПЛАН] status: "sent"|"delivered"|"read"
-  [ПЛАН] fileUrl, filename, fileSize, mimeType (для docs)
+  audioUrl, audioDuration
+  [ПЛАН Ф2] status: "sent"|"delivered"|"read"
+  [ПЛАН Ф2] fileUrl, filename, fileSize, mimeType
 
 fcm_tokens/{token}
   username, updatedAt
-  [ПРОБЛЕМА]: не очищаються невалідні токени
-
-[ПЛАН] stories/{storyId}
-  authorUsername, mediaUrl, mediaType, text, createdAt, expiresAt
-stories/{storyId}/views/{username}: viewedAt
+  ✅ Автоматично видаляються невалідні (registration-token-not-registered)
 ```
 
 ---
 
-## 🔌 SOCKET.IO ПОДІЇ
+## 🔌 SOCKET.IO — SocketService методи
 
-### Клієнт → Сервер
-| Подія | Дані | Опис |
-|-------|------|------|
-| `join_chat` | chatId | Вхід у кімнату |
-| `leave_chat` | chatId | Вихід |
-| `send_message` | {chatId, text, sender, type, replyTo?, audioUrl?, audioDuration?} | Надіслати |
-| `delete_message` | {messageId, chatId} | Видалити |
-| `edit_message` | {messageId, newText, username, chatId} | Редагувати |
-| `add_reaction` | {messageId, emoji, username, chatId} | Реакція (toggle) |
-| `typing` | {username, chatId} | Індикатор набору |
-| `mark_read` | {chatId} | Позначити прочитаним |
-| `register_token` | {token, username} | FCM токен |
-| `request_history` | chatId | Завантажити 50 повідомлень (тільки Windows) |
-| `debug_log` | string | Лог з телефону |
+```dart
+// Використовувати ТІЛЬКИ через SocketService — не socket.emit напряму!
+final _socketSvc = SocketService();
 
-### Сервер → Клієнт
-| Подія | Дані | Опис |
-|-------|------|------|
-| `receive_message` | messageData | Нове повідомлення |
-| `load_history` | message[] | Історія (Windows) |
-| `message_deleted` | messageId | Видалено |
-| `message_edited` | {messageId, newText, edited} | Відредаговано |
-| `reaction_updated` | {messageId, reactions} | Реакції оновлено |
-| `display_typing` | {username, chatId} | Хтось друкує |
-| `message_read_update` | data | Прочитано |
+_socketSvc.init()
+_socketSvc.connect() / disconnect()
+_socketSvc.joinChat(chatId)
+_socketSvc.leaveChat(chatId)
+_socketSvc.sendMessage(data)
+_socketSvc.deleteMessage(msgId, chatId)
+_socketSvc.editMessage(msgId, text, user, chatId)
+_socketSvc.addReaction(msgId, emoji, user, chatId)
+_socketSvc.emitTyping(username, chatId)
+_socketSvc.markRead(chatId, username)
+_socketSvc.registerToken(token, username)
+_socketSvc.requestHistory(chatId)
+_socketSvc.on(event, handler)
+_socketSvc.isConnected                  // bool
+_socketSvc.socket                       // IO.Socket (прямий доступ тільки для debug)
+_socketSvc.dispose()
+```
+
+### Socket події сервер → клієнт
+| Подія | Дані |
+|-------|------|
+| `receive_message` | messageData |
+| `load_history` | message[] |
+| `message_deleted` | messageId |
+| `message_edited` | { messageId, newText, edited } |
+| `reaction_updated` | { messageId, reactions } |
+| `display_typing` | { username, chatId } |
+| `message_read_update` | data |
 
 ---
 
@@ -161,121 +190,152 @@ stories/{storyId}/views/{username}: viewedAt
 
 | Метод | Ендпоінт | Опис |
 |-------|----------|------|
-| POST | `/auth` | Вхід/реєстрація {username, avatarUrl} → {status, user} |
-| POST | `/upload` | Завантажити фото → {url} |
-| POST | `/upload-audio` | Завантажити аудіо → {url} |
-| GET | `/search_users?q=&myUsername=` | Пошук юзерів |
-| POST | `/get_or_create_dm` | {myUsername, otherUsername} → {id, ...chat} |
-| GET | `/get_user_chats?username=` | Список чатів (для Windows) |
-| GET | `/ping` | Health check |
-
-### ПЛАН нових ендпоінтів:
-```
-POST /auth            → додати password, повертати {token, refreshToken, user}
-POST /refresh         → {refreshToken} → {token}
-GET  /messages        → ?chatId=&before=<timestamp>&limit=50  (пагінація)
-POST /upload-file     → документи PDF/DOCX/ZIP → {url, filename, size, mimeType}
-POST /create_group    → {name, participants[], adminUsername}
-GET  /users/:username → розширений профіль
-PUT  /users/:username → {bio, links}
-POST /stories         → {mediaUrl, mediaType, text}
-GET  /stories         → активні сторіз згруповані по автору
-```
+| POST | `/auth` | { username, avatarUrl } → { status, user } |
+| POST | `/upload` | фото → { url } |
+| POST | `/upload-audio` | аудіо → { url } |
+| GET | `/search_users?q=&myUsername=` | пошук |
+| POST | `/get_or_create_dm` | { myUsername, otherUsername } → chat |
+| GET | `/get_user_chats?username=` | список чатів (Windows) |
+| GET | `/ping` | health check |
 
 ---
 
 ## ✅ ЩО РЕАЛІЗОВАНО (17 функцій)
 
-- [x] Приватні чати (DM) — Firestore + Socket.IO rooms
+- [x] Приватні чати (DM) — Firestore + Socket.IO
 - [x] Авторизація через нікнейм + аватар
 - [x] Надсилання фото (Firebase Storage)
-- [x] Голосові повідомлення + Waveform плеєр (audio_player_widget.dart)
-- [x] Запис голосу з анімацією (voice_recorder.dart + вбудований у ChatScreen)
-- [x] Реакції на повідомлення (emoji toggle)
-- [x] Reply (відповідь на конкретне повідомлення) + swipe-to-reply
+- [x] Голосові повідомлення + Waveform плеєр (CustomPainter)
+- [x] Реакції на повідомлення (toggle emoji)
+- [x] Reply + swipe-to-reply
 - [x] Редагування та видалення повідомлень
 - [x] Signal Dark UI (SignalColors + AppSizes)
-- [x] Плаваюча овальна навігація (Telegram-стиль)
-- [x] FCM Push Notifications (multicast — є БАГ, надсилає всім)
-- [x] Windows підтримка (HTTP fallback + Socket.IO)
-- [x] Shorebird OTA-оновлення
-- [x] Typing indicator з анімацією крапок
+- [x] Плаваюча овальна навігація
+- [x] FCM Push (тільки учасникам чату ✅ FIXED)
+- [x] Windows підтримка (HTTP fallback)
+- [x] Shorebird OTA (у SettingsScreen)
+- [x] Typing indicator з анімацією
 - [x] Розділювачі дат + Scroll Date Overlay
-- [x] Контекстне меню Signal-стиль (blur overlay + реакції)
+- [x] Контекстне меню Signal-стиль
 - [x] Пошук користувачів
+- [x] Завантаження 50 повідомлень (request_history)
 
 ---
 
-## 🐛 ВІДОМІ БАГИ (виправити першими)
+## ✅ ВИКОНАНИЙ РЕФАКТОРИНГ (v2.3.5)
 
-### 🔴 Критичні:
-1. **Push всім** — `send_message` надсилає FCM ВСІМ юзерам, не тільки учасникам чату. Виправлення: читати `chat.participants`, фільтрувати `fcm_tokens` за ними.
-2. **Дублікат LoginScreen** — є і в `main.dart` і в `login_screen.dart`. Прибрати з `main.dart`.
-3. **Немає пароля** — авторизація тільки по нікнейму, будь-хто може зайти під чужим іменем.
-4. **Socket без auth** — будь-хто може підключитись і надсилати повідомлення.
+| # | Задача | Результат |
+|---|--------|-----------|
+| Б1 | Push-фільтр по учасниках | ✅ where("username","in",recipients) + авто-видалення токенів |
+| Б2 | Дублікат LoginScreen | ✅ Тільки login_screen.dart |
+| Б3 | maxHttpBufferSize 60MB→10MB | ✅ 1e7 + pingTimeout |
+| Б4 | Graceful shutdown | ✅ SIGTERM + SIGINT |
+| Р1 | Розбито main.dart | ✅ 6 файлів у widgets/ |
+| Р2 | ChatDateUtils | ✅ utils/date_utils.dart (імпорт as AppDate) |
+| Р3 | SocketService | ✅ services/socket_service.dart singleton |
+| Р4 | AppConfig + .env | ✅ config/app_config.dart + flutter_dotenv |
+| Р5 | firebaseAvailable → AppConfig | ✅ AppConfig.firebaseAvailable |
+| Р6 | voice_recorder.dart | ✅ Помилок немає |
 
-### 🟠 Важливі:
-5. **`main.dart` ~1400 рядків** — ChatScreen, MessageBubble, SwipeToReply, TypingIndicator тощо — все в одному файлі.
-6. **`serverUrl` hardcode** — треба у `.env` через `flutter_dotenv`.
-7. **`maxHttpBufferSize = 6e7`** — 60MB, DoS ризик. Зменшити до `10e6`.
-8. **`fcm_tokens` не очищаються** — невалідні токени накопичуються.
-9. **Немає graceful shutdown** — `process.on('SIGTERM', ...)` відсутній.
-10. **`firebaseAvailable` — глобальна змінна** — замінити на DI (get_it або riverpod).
+---
+
+## 🐛 ВІДОМІ ПРОБЛЕМИ (актуальні)
+
+### 🔴 Критичні (Фаза 1):
+1. **Немає пароля** — авторизація тільки по нікнейму
+2. **Socket без JWT** — будь-хто може підключитись
+
+### 🟡 Дрібні:
+3. **Немає статусів ✓✓** — поле isRead є але завжди false
+4. **Немає пагінації** — тільки останні 50 повідомлень
+5. **Немає групових чатів**
+
+---
+
+## ⚠️ ВАЖЛИВІ НЮАНСИ (щоб не повторювати помилки)
+
+```
+1. DateUtils → ChatDateUtils
+   Конфлікт з Flutter material.dart!
+   import 'utils/date_utils.dart' as AppDate;
+   AppDate.ChatDateUtils.formatTime(ts)
+
+2. SettingsScreen — НЕ додавати leading: IconButton у AppBar
+   Відкривається як вкладка IndexedStack → Navigator.pop = чорний екран
+
+3. serverUrl — НЕ const (getter не може бути const)
+   final String serverUrl = AppConfig.serverUrl; ← або напряму AppConfig.serverUrl
+
+4. dotenv.load — ОБОВ'ЯЗКОВО try/catch
+   try { await dotenv.load(fileName: '.env'); } catch (_) {}
+   Без цього — чорний екран якщо .env відсутній
+
+5. socket.emit — більше не використовувати напряму
+   Тільки _socketSvc.методНазва()
+   Виняток: _socketSvc.socket.emit('debug_log', ...) — тільки для debug
+
+6. .env у pubspec.yaml assets — ОБОВ'ЯЗКОВО
+   assets:
+     - .env
+     - shorebird.yaml
+```
 
 ---
 
 ## 📱 ОСОБЛИВОСТІ ПЛАТФОРМ
 
 ```dart
-// Windows: Firebase/Firestore недоступні
-if (!firebaseAvailable) {
-  // Використовуємо HTTP /get_user_chats та Socket.IO request_history
-  // _localMessages — локальний List замість StreamBuilder
+if (!AppConfig.firebaseAvailable) {
+  // Windows: HTTP /get_user_chats + Socket.IO request_history
+  // _localMessages: List<Map> замість StreamBuilder
+} else {
+  // Android/iOS: Firestore StreamBuilder + FCM push + Shorebird OTA
 }
-
-// Android/iOS: Firestore StreamBuilder (real-time)
-// Firebase Messaging + Push Notifications
-// Shorebird OTA (тільки Android/iOS)
 ```
 
 ---
 
-## 📦 PUBSPEC ЗАЛЕЖНОСТІ (ключові)
+## 📦 PUBSPEC — КЛЮЧОВІ ЗАЛЕЖНОСТІ
 
 ```yaml
 socket_io_client: ^3.1.4
 firebase_core: ^4.4.0
 firebase_messaging: ^16.1.1
 cloud_firestore: ^6.1.2
+firebase_storage: ^12.1.2
+flutter_dotenv: ^5.1.0
 shorebird_code_push: ^2.0.5
 image_picker: ^1.2.1
-record: ^6.2.0          # Запис аудіо
-audioplayers: ^6.5.1    # Відтворення аудіо
-audio_waveforms: ^2.0.2 # (є в pubspec, але використовується власний painter)
-just_audio: ^0.9.43
-vibration: ^3.1.6       # Haptic при swipe-to-reply
+record: ^6.2.0
+audioplayers: ^6.5.1
+vibration: ^3.1.6
 permission_handler: ^12.0.1
 path_provider: ^2.1.1
 shared_preferences: ^2.5.4
 http: ^1.6.0
+
+flutter:
+  assets:
+    - .env
+    - shorebird.yaml
 ```
 
 ---
 
-## 🗓 ПЛАН РОЗВИТКУ (короткий)
+## 🗓 НАСТУПНІ КРОКИ (Фаза 1 — Безпека)
 
-| Пріоритет | Задача | Час |
-|-----------|--------|-----|
-| 🔴 ЗАРАЗ | Виправити push-фільтр по учасниках | 1 день |
-| 🔴 ЗАРАЗ | Розбити main.dart на файли | 2 дні |
-| 🔴 ЗАРАЗ | Додати пароль + JWT | 3 дні |
-| 🟠 Фаза 1 | Rate limiting, helmet, валідація | 1 тиждень |
-| 🟠 Фаза 2 | Статуси ✓✓✓, онлайн-статус, пагінація | 2 тижні |
-| 🟠 Фаза 2 | Передача документів, групові чати | 3 тижні |
-| 🟡 Фаза 2 | WebRTC дзвінки | 1 місяць |
-| 🟡 Фаза 3 | Профілі, Сторіз | 1 місяць |
-| 🟡 Фаза 4 | DevOps, Redis, CI/CD, тести | 1 місяць |
-| ⏳ Фаза 5 | E2EE, монетизація | 2026+ |
+```
+Встановити на сервері:
+  npm install jsonwebtoken bcryptjs express-rate-limit helmet morgan joi
+
+1. POST /auth — додати password, bcrypt.hash(password, 12)
+2. Генерувати JWT token (7d) + refreshToken (30d)
+3. Middleware verifyJWT для захищених ендпоінтів
+4. POST /refresh для оновлення токена
+5. Socket.IO auth: io.use((socket, next) => { jwt.verify(...) })
+6. Flutter: поле пароля у LoginScreen + AuthService + Dio interceptor
+7. Rate limiting: /auth 10req/15хв, /upload 30req/хв
+```
 
 ---
 
@@ -284,10 +344,14 @@ http: ^1.6.0
 ```
 Новий чат → вставити CONTEXT.md → додати ТІЛЬКИ потрібний файл:
 
-Задача: "виправити push-фільтр"     → додати server/index.js
-Задача: "додати пагінацію в чаті"   → додати main.dart (або chat_screen.dart)
-Задача: "нові кольори у темі"        → додати theme.dart
-Задача: "проблема з аудіо плеєром"  → додати audio_player_widget.dart
-Задача: "розбити main.dart"         → додати main.dart
-Задача: "щось не так у навігації"   → додати home_screen.dart
+"додати JWT"              → server/index.js
+"проблема у чаті"         → main.dart
+"проблема навігація"      → home_screen.dart
+"налаштування"            → settings_screen.dart
+"пошук користувачів"      → search_screen.dart
+"кольори / теми"          → theme.dart
+"аудіо плеєр"             → audio_player_widget.dart
+"сокет проблема"          → services/socket_service.dart
+"дата/час"                → utils/date_utils.dart
+"конфіг / env"            → config/app_config.dart
 ```

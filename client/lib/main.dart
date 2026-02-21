@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'services/socket_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shorebird_code_push/shorebird_code_push.dart';
@@ -28,11 +29,12 @@ import 'widgets/typing_indicator.dart';
 import 'widgets/date_separator.dart';
 import 'widgets/reaction_widgets.dart';
 import 'widgets/reply_preview.dart';
-
-const String serverUrl = 'https://pproject-y.onrender.com';
+import 'utils/date_utils.dart' as AppDate;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'config/app_config.dart';
 
 // Глобальний флаг доступності Firebase (false на Windows без firebase_options.dart)
-bool firebaseAvailable = false;
+//bool firebaseAvailable = false;
 
 class AppColors {
   static const Color mainColor = SignalColors.primary;
@@ -53,6 +55,12 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // ✅ Стало — з fallback:
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {
+    // .env не знайдено — AppConfig використає hardcode fallback
+  }
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
   );
@@ -69,10 +77,10 @@ void main() async {
           _firebaseMessagingBackgroundHandler,
         );
       }
-      firebaseAvailable = true;
+      AppConfig.firebaseAvailable = true;
       print("✅ Firebase Init OK");
     } catch (e) {
-      firebaseAvailable = false;
+      AppConfig.firebaseAvailable = false;
       print("❌ Firebase Init Error: $e");
       print(
         "💡 Запустіть: flutterfire configure --platforms=windows,android,ios",
@@ -168,7 +176,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController textController = TextEditingController();
-  late IO.Socket socket;
+  final _socketSvc = SocketService();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
 
@@ -247,7 +255,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _logToServer(String msg) {
     print("LOG: $msg");
-    if (socket.connected) socket.emit('debug_log', "User $myName: $msg");
+    if (_socketSvc.isConnected)
+      _socketSvc.socket.emit('debug_log', "User $myName: $msg");
   }
 
   Future<void> setupPushNotifications() async {
@@ -255,11 +264,8 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await messaging.requestPermission();
       String? token = await messaging.getToken();
-      if (token != null && socket.connected) {
-        socket.emit('register_token', {
-          'token': token,
-          'username': widget.username,
-        });
+      if (token != null && _socketSvc.isConnected) {
+        _socketSvc.registerToken(token, widget.username);
       }
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         print("📱 Push received: ${message.notification?.title}");
@@ -270,33 +276,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void initSocket() {
-    socket = IO.io(
-      serverUrl,
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .build(),
-    );
-    socket.connect();
+    _socketSvc.init();
+    _socketSvc.connect();
 
-    socket.onConnect((_) {
+    _socketSvc.onConnect((_) {
       print('✅ Connected to server');
-      // 🔥 ВХІД В КІМНАТУ
-      socket.emit('join_chat', widget.chatId);
-      // 🖥️ Для Windows завантажуємо історію через Socket.IO (Firestore недоступний)
-      if (!firebaseAvailable) {
-        socket.emit('request_history', widget.chatId);
+      _socketSvc.joinChat(widget.chatId);
+      if (!AppConfig.firebaseAvailable) {
+        _socketSvc.requestHistory(widget.chatId);
       }
     });
 
-    // 🖥️ Отримання повідомлень через Socket.IO (головним чином для Windows)
-    // На Android/iOS Firestore StreamBuilder оновлюється автоматично.
-    // Але слухаємо і на мобільних — як fallback для моментального відображення.
-    socket.on('receive_message', (data) {
+    _socketSvc.on('receive_message', (data) {
       if (!mounted) return;
       final msg = Map<String, dynamic>.from(data as Map);
 
-      if (!firebaseAvailable) {
+      if (!AppConfig.firebaseAvailable) {
         // Windows: додаємо повідомлення в локальний список
         setState(() => _localMessages.insert(0, msg));
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -312,8 +307,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // 🖥️ Завантаження історії для Windows
-    socket.on('load_history', (data) {
-      if (!firebaseAvailable && mounted) {
+    _socketSvc.on('load_history', (data) {
+      if (!AppConfig.firebaseAvailable && mounted) {
         final list = (data as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
@@ -326,15 +321,15 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // 🖥️ Видалення повідомлення (Windows)
-    socket.on('message_deleted', (messageId) {
-      if (!firebaseAvailable && mounted) {
+    _socketSvc.on('message_deleted', (messageId) {
+      if (!AppConfig.firebaseAvailable && mounted) {
         setState(() => _localMessages.removeWhere((m) => m['id'] == messageId));
       }
     });
 
     // 🖥️ Редагування повідомлення (Windows)
-    socket.on('message_edited', (data) {
-      if (!firebaseAvailable && mounted) {
+    _socketSvc.on('message_edited', (data) {
+      if (!AppConfig.firebaseAvailable && mounted) {
         final d = Map<String, dynamic>.from(data as Map);
         setState(() {
           final idx = _localMessages.indexWhere(
@@ -352,8 +347,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // 🖥️ Оновлення реакцій (Windows) — без цього реакції видно тільки після перезавантаження
-    socket.on('reaction_updated', (data) {
-      if (!firebaseAvailable && mounted) {
+    _socketSvc.on('reaction_updated', (data) {
+      if (!AppConfig.firebaseAvailable && mounted) {
         final d = Map<String, dynamic>.from(data as Map);
         final msgId = d['messageId'] as String?;
         final reactions = d['reactions'];
@@ -372,7 +367,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    socket.on('display_typing', (data) {
+    _socketSvc.on('display_typing', (data) {
       if (mounted && data['username'] != myName) {
         setState(() {
           _isTyping = true;
@@ -392,7 +387,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('$serverUrl/upload'),
+        Uri.parse('${AppConfig.serverUrl}/upload'),
       );
       request.files.add(await http.MultipartFile.fromPath('image', image.path));
       var response = await request.send();
@@ -446,13 +441,13 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    if (socket.connected) {
-      socket.emit('edit_message', {
-        'messageId': _editingMessageId,
-        'newText': newText,
-        'username': myName,
-        'chatId': widget.chatId,
-      });
+    if (_socketSvc.isConnected) {
+      _socketSvc.editMessage(
+        _editingMessageId!,
+        newText,
+        myName,
+        widget.chatId,
+      );
     }
 
     _cancelEditing();
@@ -532,7 +527,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final file = File(path);
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$serverUrl/upload-audio'),
+        Uri.parse('${AppConfig.serverUrl}/upload-audio'),
       );
       request.files.add(await http.MultipartFile.fromPath('audio', file.path));
       final response = await request.send();
@@ -566,13 +561,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _addReaction(String messageId, String emoji) {
-    if (socket.connected) {
-      socket.emit('add_reaction', {
-        'messageId': messageId,
-        'emoji': emoji,
-        'username': myName,
-        'chatId': widget.chatId,
-      });
+    if (_socketSvc.isConnected) {
+      _socketSvc.addReaction(messageId, emoji, myName, widget.chatId);
     }
   }
 
@@ -607,8 +597,8 @@ class _ChatScreenState extends State<ChatScreen> {
         },
     };
 
-    if (socket.connected) {
-      socket.emit('send_message', messageData);
+    if (_socketSvc.isConnected) {
+      _socketSvc.sendMessage(messageData);
     }
     textController.clear();
     _cancelReply();
@@ -954,11 +944,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           TextButton(
             onPressed: () {
-              if (socket.connected) {
-                socket.emit('delete_message', {
-                  'messageId': messageId,
-                  'chatId': widget.chatId,
-                });
+              if (_socketSvc.isConnected) {
+                _socketSvc.deleteMessage(messageId, widget.chatId);
               }
               Navigator.pop(ctx);
             },
@@ -972,34 +959,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  DateTime _parseDate(dynamic timestamp) {
-    if (timestamp == null) return DateTime.now();
-    try {
-      if (timestamp is Timestamp) return timestamp.toDate();
-      if (timestamp is String) return DateTime.parse(timestamp);
-      if (timestamp is Map && timestamp['_seconds'] != null) {
-        return DateTime.fromMillisecondsSinceEpoch(
-          timestamp['_seconds'] * 1000,
-        );
-      }
-    } catch (e) {}
-    return DateTime.now();
-  }
-
-  bool _isSameDay(DateTime d1, DateTime d2) =>
-      d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
-  String _getDateLabel(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final messageDate = DateTime(date.year, date.month, date.day);
-    if (messageDate == today) return "Сьогодні";
-    if (messageDate == yesterday) return "Вчора";
-    return "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
-  }
-
-  // ───────────────────────────────────────────────────────────
-  // 🎨 Колір аватара з нікнейму (як у Signal)
   // ───────────────────────────────────────────────────────────
   Color _avatarColor(String username) {
     const colors = [
@@ -1027,7 +986,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (maxOffset <= 0) return;
     final ratio = (offset / maxOffset).clamp(0.0, 1.0);
     final idx = (ratio * (messages.length - 1)).round();
-    final label = _getDateLabel(_parseDate(messages[idx]["timestamp"]));
+    final label = AppDate.ChatDateUtils.dateLabel(
+      AppDate.ChatDateUtils.parseDate(messages[idx]["timestamp"]),
+    );
     setState(() => _scrollDateLabel = label);
     _scrollDateTimer?.cancel();
     _scrollDateTimer = Timer(const Duration(milliseconds: 2200), () {
@@ -1037,7 +998,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    socket.dispose();
+    _socketSvc.dispose();
     textController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
@@ -1216,7 +1177,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Positioned.fill(
               child: StreamBuilder<QuerySnapshot>(
-                stream: firebaseAvailable
+                stream: AppConfig.firebaseAvailable
                     ? FirebaseFirestore.instance
                           .collection('chats')
                           .doc(widget.chatId)
@@ -1227,7 +1188,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     : const Stream.empty(),
                 builder: (context, snapshot) {
                   // 🖥️ Windows: показуємо повідомлення з локального списку (Socket.IO)
-                  if (!firebaseAvailable) {
+                  if (!AppConfig.firebaseAvailable) {
                     return _buildMessagesList(_localMessages);
                   }
                   if (!snapshot.hasData) {
@@ -1300,13 +1261,20 @@ class _ChatScreenState extends State<ChatScreen> {
               if (msgIndex == messages.length - 1) {
                 showDateSeparator = true;
               } else {
-                final currentDate = _parseDate(msg['timestamp']);
-                final prevDate = _parseDate(
+                final currentDate = AppDate.ChatDateUtils.parseDate(
+                  msg['timestamp'],
+                );
+                final prevDate = AppDate.ChatDateUtils.parseDate(
                   messages[msgIndex + 1]['timestamp'],
                 );
-                showDateSeparator = !_isSameDay(currentDate, prevDate);
+                showDateSeparator = !AppDate.ChatDateUtils.isSameDay(
+                  currentDate,
+                  prevDate,
+                );
               }
-              final dateLabel = _getDateLabel(_parseDate(msg['timestamp']));
+              final dateLabel = AppDate.ChatDateUtils.dateLabel(
+                AppDate.ChatDateUtils.parseDate(msg['timestamp']),
+              );
 
               return Column(
                 children: [
@@ -1576,11 +1544,8 @@ class _ChatScreenState extends State<ChatScreen> {
             child: TextField(
               controller: textController,
               onChanged: (text) {
-                if (text.isNotEmpty && socket.connected) {
-                  socket.emit('typing', {
-                    'username': myName,
-                    'chatId': widget.chatId,
-                  });
+                if (text.isNotEmpty && _socketSvc.isConnected) {
+                  _socketSvc.emitTyping(myName, widget.chatId);
                 }
               },
               style: const TextStyle(
