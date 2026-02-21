@@ -63,7 +63,7 @@ const searchLimiter = rateLimit({
 // 🔐 JOI СХЕМИ ВАЛІДАЦІЇ
 // ==========================================
 const authSchema = Joi.object({
-  username: Joi.string().alphanum().min(3).max(20).required()
+  username: Joi.string().min(3).max(20).pattern(/^[\w\u0400-\u04FFа-яА-ЯіІїЇєЄ' ._-]+$/).required()
     .messages({
       'string.alphanum': "Нікнейм може містити тільки літери та цифри",
       'string.min': "Нікнейм мінімум 3 символи",
