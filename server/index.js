@@ -41,7 +41,7 @@ app.use(express.json());
 // ⏱️ RATE LIMITING
 // ==========================================
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 хвилин
+  windowMs: 15 * 60 * 1000,
   max: 10,
   message: { error: 'Забагато спроб входу. Спробуй через 15 хвилин.' },
   standardHeaders: true,
@@ -49,7 +49,7 @@ const authLimiter = rateLimit({
 });
 
 const uploadLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 хвилина
+  windowMs: 60 * 1000,
   max: 30,
   message: { error: 'Забагато завантажень. Зачекай хвилину.' },
 });
@@ -64,8 +64,8 @@ const searchLimiter = rateLimit({
 // 🔐 JOI СХЕМИ ВАЛІДАЦІЇ
 // ==========================================
 const authSchema = Joi.object({
-  // ✅ Логін — тільки латиниця, цифри, крапка, підкреслення, дефіс
-  // Кирилиця НЕ дозволена — логін використовується як унікальний ідентифікатор
+  // username (логін) — тільки латиниця, цифри, . _ -
+  // Незмінний унікальний ідентифікатор, використовується в JWT і пошуку
   username: Joi.string().min(3).max(20).pattern(/^[a-zA-Z0-9._-]+$/).required()
     .messages({
       'string.pattern.base': "Логін може містити тільки латинські літери (a-z), цифри та символи . _ -",
@@ -77,6 +77,13 @@ const authSchema = Joi.object({
     .messages({
       'string.min': "Пароль мінімум 8 символів",
       'any.required': "Пароль обов'язковий",
+    }),
+  // displayName (псевдонім) — будь-яка мова, включно з кирилицею
+  // Відображається як ім'я у UI. Необов'язковий — якщо не вказано, = username
+  displayName: Joi.string().min(2).max(30).optional().allow('', null)
+    .messages({
+      'string.min': "Псевдонім мінімум 2 символи",
+      'string.max': "Псевдонім максимум 30 символів",
     }),
   avatarUrl: Joi.string().uri().optional().allow(null, ''),
 });
@@ -90,7 +97,7 @@ const refreshSchema = Joi.object({
 // ==========================================
 const verifyJWT = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // "Bearer <token>"
+  const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
     return res.status(401).json({ error: 'Токен відсутній' });
@@ -98,7 +105,7 @@ const verifyJWT = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // { username, iat, exp }
+    req.user = decoded;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -112,13 +119,17 @@ const verifyJWT = (req, res, next) => {
 // 🔐 1. АВТОРИЗАЦІЯ — з паролем + JWT
 // ==========================================
 app.post('/auth', authLimiter, async (req, res) => {
-  // Joi валідація
   const { error, value } = authSchema.validate(req.body);
   if (error) {
     return res.status(400).json({ error: error.details[0].message });
   }
 
-  const { username, password, avatarUrl } = value;
+  const { username, password, displayName, avatarUrl } = value;
+
+  // Псевдонім: якщо не вказано — використовуємо username як дефолт
+  const resolvedDisplayName = (displayName && displayName.trim())
+    ? displayName.trim()
+    : username;
 
   try {
     const usersRef = db.collection('users');
@@ -128,10 +139,11 @@ app.post('/auth', authLimiter, async (req, res) => {
     let docId;
 
     if (snapshot.empty) {
-      // 🆕 РЕЄСТРАЦІЯ — новий користувач
+      // 🆕 РЕЄСТРАЦІЯ
       const passwordHash = await bcrypt.hash(password, 12);
       const newUser = {
         username,
+        displayName: resolvedDisplayName,
         avatarUrl: avatarUrl || null,
         passwordHash,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -140,7 +152,6 @@ app.post('/auth', authLimiter, async (req, res) => {
       docId = docRef.id;
       userData = newUser;
 
-      // Генеруємо токени
       const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
       const refreshToken = jwt.sign({ username, type: 'refresh' }, JWT_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN });
 
@@ -148,15 +159,18 @@ app.post('/auth', authLimiter, async (req, res) => {
         status: 'created',
         token,
         refreshToken,
-        user: { username, avatarUrl: userData.avatarUrl }
+        user: {
+          username,
+          displayName: resolvedDisplayName,
+          avatarUrl: userData.avatarUrl,
+        }
       });
 
     } else {
-      // 🔓 ВХІД — перевіряємо пароль
+      // 🔓 ВХІД
       docId = snapshot.docs[0].id;
       userData = snapshot.docs[0].data();
 
-      // Якщо у старого акаунта немає passwordHash — встановлюємо пароль
       if (!userData.passwordHash) {
         const passwordHash = await bcrypt.hash(password, 12);
         await usersRef.doc(docId).update({ passwordHash });
@@ -168,7 +182,18 @@ app.post('/auth', authLimiter, async (req, res) => {
         return res.status(401).json({ error: 'Невірний пароль' });
       }
 
-      // Оновлюємо аватар якщо є
+      // Оновлюємо displayName якщо користувач його змінив
+      // (тільки якщо явно передано і воно відрізняється)
+      let currentDisplayName = userData.displayName || userData.username;
+      if (displayName && displayName.trim() && displayName.trim() !== currentDisplayName) {
+        currentDisplayName = displayName.trim();
+        await usersRef.doc(docId).update({ displayName: currentDisplayName });
+      }
+      // Якщо старий акаунт без displayName — мігруємо
+      if (!userData.displayName) {
+        await usersRef.doc(docId).update({ displayName: currentDisplayName });
+      }
+
       if (avatarUrl && avatarUrl !== userData.avatarUrl) {
         await usersRef.doc(docId).update({ avatarUrl });
         userData.avatarUrl = avatarUrl;
@@ -181,7 +206,11 @@ app.post('/auth', authLimiter, async (req, res) => {
         status: 'found',
         token,
         refreshToken,
-        user: { username, avatarUrl: userData.avatarUrl }
+        user: {
+          username,
+          displayName: currentDisplayName,
+          avatarUrl: userData.avatarUrl,
+        }
       });
     }
 
@@ -284,6 +313,8 @@ app.post('/upload-audio', verifyJWT, uploadLimiter, upload.single('audio'), asyn
 
 // ==========================================
 // 🔍 4. ПОШУК КОРИСТУВАЧІВ (захищено)
+// Повертає username + displayName + avatarUrl
+// Пошук іде по username (логіну) — незмінному полю
 // ==========================================
 app.get('/search_users', verifyJWT, searchLimiter, async (req, res) => {
   const query = req.query.q;
@@ -301,7 +332,11 @@ app.get('/search_users', verifyJWT, searchLimiter, async (req, res) => {
     const users = snapshot.docs
       .map(doc => doc.data())
       .filter(u => u.username !== myUsername)
-      .map(u => ({ username: u.username, avatarUrl: u.avatarUrl })); // НЕ повертаємо passwordHash!
+      .map(u => ({
+        username: u.username,
+        displayName: u.displayName || u.username, // fallback для старих акаунтів
+        avatarUrl: u.avatarUrl,
+      }));
 
     res.json(users);
   } catch (err) {
@@ -312,12 +347,13 @@ app.get('/search_users', verifyJWT, searchLimiter, async (req, res) => {
 
 // ==========================================
 // 💬 5. СТВОРЕННЯ/ОТРИМАННЯ DM (захищено)
+// Зберігає participantNames {username: displayName}
+// щоб HomeScreen міг показувати displayName у списку чатів
 // ==========================================
 app.post('/get_or_create_dm', verifyJWT, async (req, res) => {
-  const { myUsername, otherUsername } = req.body;
+  const { myUsername, otherUsername, myDisplayName, otherDisplayName } = req.body;
   if (!myUsername || !otherUsername) return res.status(400).send("No usernames");
 
-  // Перевіряємо що токен збігається з myUsername
   if (req.user.username !== myUsername) {
     return res.status(403).json({ error: 'Доступ заборонено' });
   }
@@ -336,11 +372,27 @@ app.post('/get_or_create_dm', verifyJWT, async (req, res) => {
       }
     });
 
-    if (existingChat) return res.json(existingChat);
+    if (existingChat) {
+      // Оновлюємо participantNames якщо вони змінились
+      if (myDisplayName || otherDisplayName) {
+        const names = existingChat.participantNames || {};
+        if (myDisplayName) names[myUsername] = myDisplayName;
+        if (otherDisplayName) names[otherUsername] = otherDisplayName;
+        await chatsRef.doc(existingChat.id).update({ participantNames: names });
+        existingChat.participantNames = names;
+      }
+      return res.json(existingChat);
+    }
+
+    // Збираємо displayName для обох учасників
+    const participantNames = {};
+    if (myDisplayName) participantNames[myUsername] = myDisplayName;
+    if (otherDisplayName) participantNames[otherUsername] = otherDisplayName;
 
     const newChat = {
       type: 'dm',
       participants: [myUsername, otherUsername],
+      participantNames,  // {username: displayName} для відображення у списку
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       lastMessage: null
     };
@@ -412,7 +464,7 @@ io.use((socket, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    socket.username = decoded.username; // зберігаємо username у сокеті
+    socket.username = decoded.username;
     next();
   } catch (err) {
     next(new Error('Недійсний токен'));
@@ -422,7 +474,7 @@ io.use((socket, next) => {
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('Messenger Y Server v2.4.1 🔐');
+  res.send('Messenger Y Server v2.5.0 🔐');
 });
 
 app.get('/ping', (req, res) => {
@@ -449,7 +501,7 @@ io.on('connection', async (socket) => {
 
   socket.on('register_token', async (data) => {
     let token = "";
-    let username = socket.username; // беремо з JWT, не від клієнта
+    let username = socket.username;
 
     if (typeof data === 'string') {
       token = data;
@@ -487,7 +539,7 @@ io.on('connection', async (socket) => {
 
   socket.on('send_message', async (data) => {
     const { chatId, text, type } = data;
-    const sender = socket.username; // з JWT, не від клієнта!
+    const sender = socket.username; // з JWT!
 
     if (!chatId) return;
 
@@ -520,13 +572,17 @@ io.on('connection', async (socket) => {
     const savedMessage = { id: docRef.id, ...messageData, timestamp: new Date().toISOString() };
     io.to(chatId).emit('receive_message', savedMessage);
 
-    // FCM Push
+    // FCM Push — використовуємо displayName у заголовку якщо є
     try {
       const chatDoc = await db.collection("chats").doc(chatId).get();
-      const participants = chatDoc.data()?.participants || [];
+      const chatData = chatDoc.data() || {};
+      const participants = chatData.participants || [];
       const recipients = participants.filter(u => u !== sender);
 
       if (recipients.length === 0) return;
+
+      // Беремо displayName відправника для красивого push-заголовку
+      const senderDisplayName = (chatData.participantNames || {})[sender] || sender;
 
       const tokensSnap = await db.collection("fcm_tokens")
         .where("username", "in", recipients).get();
@@ -535,7 +591,7 @@ io.on('connection', async (socket) => {
       if (tokens.length > 0) {
         const payload = {
           notification: {
-            title: `Нове від ${sender}`,
+            title: `${senderDisplayName}`,
             body: type === 'image' ? '📷 Фото' : type === 'voice' ? '🎤 Голосове' : text,
           },
           data: { chatId, sender },
@@ -556,7 +612,7 @@ io.on('connection', async (socket) => {
   socket.on('typing', (data) => {
     if (data.chatId) {
       socket.to(data.chatId).emit('display_typing', {
-        username: socket.username, // з JWT
+        username: socket.username,
         chatId: data.chatId
       });
     }
@@ -581,7 +637,7 @@ io.on('connection', async (socket) => {
 
   socket.on('add_reaction', async ({ messageId, emoji, chatId }) => {
     if (!chatId) return;
-    const username = socket.username; // з JWT
+    const username = socket.username;
 
     try {
       const messageRef = db.collection('chats').doc(chatId)
@@ -610,7 +666,7 @@ io.on('connection', async (socket) => {
 
   socket.on('edit_message', async ({ messageId, newText, chatId }) => {
     if (!chatId) return;
-    const username = socket.username; // з JWT
+    const username = socket.username;
 
     try {
       const messageRef = db.collection('chats').doc(chatId)
@@ -618,7 +674,7 @@ io.on('connection', async (socket) => {
       const messageDoc = await messageRef.get();
 
       if (!messageDoc.exists) return;
-      if (messageDoc.data().sender !== username) return; // тільки свої
+      if (messageDoc.data().sender !== username) return;
 
       await messageRef.update({
         text: newText,
@@ -641,7 +697,7 @@ io.on('connection', async (socket) => {
 // ✅ Graceful Shutdown
 // ==========================================
 server.listen(PORT, () => {
-  console.log(`🔐 Messenger Y Server v2.4.1 running on port ${PORT}`);
+  console.log(`🔐 Messenger Y Server v2.5.0 running on port ${PORT}`);
 });
 
 const shutdown = () => {
