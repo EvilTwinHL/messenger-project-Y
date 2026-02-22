@@ -1,3 +1,7 @@
 {
-    "cmake.sourceDirectory": "C:/ProjectsCODE/MessengerProject-Y/client/linux"
+    "cmake.sourceDirectory": "C:/ProjectsCODE/MessengerProject-Y/client/linux",
+    "cmake.configureOnOpen": false,
+    "cmake.automaticReconfigure": false
+    
 }
+
