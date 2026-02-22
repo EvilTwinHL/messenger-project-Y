@@ -89,14 +89,18 @@ void main() async {
     }
   }
 
-  final prefs = await SharedPreferences.getInstance();
-  final savedUsername = prefs.getString('username');
-  final savedAvatar = prefs.getString('avatarUrl');
+  final savedUsername = await AuthService.getSavedUsername();
+  final savedDisplayName = await AuthService.getSavedDisplayName();
+  final savedAvatar = await AuthService.getSavedAvatarUrl();
 
   runApp(
     MyApp(
       initialScreen: savedUsername != null
-          ? HomeScreen(myUsername: savedUsername, myAvatarUrl: savedAvatar)
+          ? HomeScreen(
+              myUsername: savedUsername,
+              myDisplayName: savedDisplayName ?? savedUsername,
+              myAvatarUrl: savedAvatar,
+            )
           : const LoginScreen(),
     ),
   );
@@ -1333,7 +1337,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // ── Scroll Date Overlay ──────────────────────────────
           if (_scrollDateLabel != null)
             Positioned(
-              top: 12,
+              top: 80,
               left: 0,
               right: 0,
               child: Center(

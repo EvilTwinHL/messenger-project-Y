@@ -7,6 +7,7 @@ class AuthService {
   static const _tokenKey = 'jwt_token';
   static const _refreshTokenKey = 'jwt_refresh_token';
   static const _usernameKey = 'username';
+  static const _displayNameKey = 'displayName'; // ← НОВЕ
   static const _avatarUrlKey = 'avatarUrl';
 
   // ─── Збереження ───────────────────────────────────────
@@ -21,10 +22,13 @@ class AuthService {
 
   static Future<void> saveUser({
     required String username,
+    String? displayName,
     String? avatarUrl,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_usernameKey, username);
+    // displayName зберігаємо завжди, fallback = username
+    await prefs.setString(_displayNameKey, displayName ?? username);
     if (avatarUrl != null) await prefs.setString(_avatarUrlKey, avatarUrl);
   }
 
@@ -44,6 +48,16 @@ class AuthService {
     return prefs.getString(_usernameKey);
   }
 
+  /// Псевдонім для відображення у UI.
+  /// Якщо не збережено — повертає username як fallback.
+  static Future<String?> getSavedDisplayName() async {
+    final prefs = await SharedPreferences.getInstance();
+    final displayName = prefs.getString(_displayNameKey);
+    if (displayName != null && displayName.isNotEmpty) return displayName;
+    // Fallback: якщо displayName порожній — повертаємо username
+    return prefs.getString(_usernameKey);
+  }
+
   static Future<String?> getSavedAvatarUrl() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_avatarUrlKey);
@@ -60,6 +74,7 @@ class AuthService {
   static Future<Map<String, dynamic>> login({
     required String username,
     required String password,
+    String? displayName, // ← НОВЕ: псевдонім
     String? avatarUrl,
   }) async {
     final url = Uri.parse('${AppConfig.serverUrl}/auth');
@@ -70,6 +85,8 @@ class AuthService {
       body: jsonEncode({
         'username': username,
         'password': password,
+        if (displayName != null && displayName.isNotEmpty)
+          'displayName': displayName,
         if (avatarUrl != null) 'avatarUrl': avatarUrl,
       }),
     );
@@ -77,14 +94,18 @@ class AuthService {
     final data = jsonDecode(response.body);
 
     if (response.statusCode == 200) {
-      // Зберігаємо токени та юзера локально
+      final user = data['user'] as Map<String, dynamic>;
+
+      // Зберігаємо токени та дані юзера локально
       await saveTokens(
         token: data['token'],
         refreshToken: data['refreshToken'],
       );
       await saveUser(
-        username: data['user']['username'],
-        avatarUrl: data['user']['avatarUrl'],
+        username: user['username'],
+        displayName:
+            user['displayName'], // ← сервер повертає актуальний displayName
+        avatarUrl: user['avatarUrl'],
       );
       return data;
     } else {
@@ -124,6 +145,7 @@ class AuthService {
     await prefs.remove(_tokenKey);
     await prefs.remove(_refreshTokenKey);
     await prefs.remove(_usernameKey);
+    await prefs.remove(_displayNameKey); // ← очищаємо і displayName
     await prefs.remove(_avatarUrlKey);
   }
 }

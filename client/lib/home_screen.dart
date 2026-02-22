@@ -14,8 +14,14 @@ import 'services/auth_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final String myUsername;
+  final String myDisplayName;
   final String? myAvatarUrl;
-  const HomeScreen({super.key, required this.myUsername, this.myAvatarUrl});
+  const HomeScreen({
+    super.key,
+    required this.myUsername,
+    required this.myDisplayName,
+    this.myAvatarUrl,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -480,7 +486,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: widget.myAvatarUrl == null
                     ? Text(
                         widget.myUsername.isNotEmpty
-                            ? widget.myUsername[0].toUpperCase()
+                            ? widget.myDisplayName[0].toUpperCase()
                             : '?',
                         style: TextStyle(
                           color: colors[1],
@@ -492,11 +498,19 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 14),
               Text(
-                widget.myUsername,
+                widget.myDisplayName,
                 style: const TextStyle(
                   color: SignalColors.textPrimary,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '@${widget.myUsername}',
+                style: const TextStyle(
+                  color: SignalColors.textSecondary,
+                  fontSize: 13,
                 ),
               ),
               const SizedBox(height: 4),

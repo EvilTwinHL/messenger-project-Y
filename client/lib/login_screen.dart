@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'theme.dart';
-import 'config/app_config.dart';
 import 'services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -13,6 +12,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
+  final _displayNameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -20,12 +20,14 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     _usernameController.dispose();
+    _displayNameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
     final username = _usernameController.text.trim();
+    final displayName = _displayNameController.text.trim();
     final password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) {
@@ -35,13 +37,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // ✅ Перевірка: логін тільки латиниця/цифри/._-
+    // Валідація логіну — тільки латиниця/цифри/._-
     final loginRegex = RegExp(r'^[a-zA-Z0-9._-]+$');
     if (!loginRegex.hasMatch(username)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Логін може містити лише латинські літери, цифри, . _ -',
+            'Логін може містити лише латинські літери, цифри та . _ -',
           ),
           backgroundColor: SignalColors.danger,
         ),
@@ -55,16 +57,22 @@ class _LoginScreenState extends State<LoginScreen> {
       final data = await AuthService.login(
         username: username,
         password: password,
+        displayName: displayName.isNotEmpty ? displayName : null,
       );
 
-      final avatarUrl = data['user']['avatarUrl'] as String?;
+      final user = data['user'] as Map<String, dynamic>;
+      final savedDisplayName = user['displayName'] as String? ?? username;
+      final avatarUrl = user['avatarUrl'] as String?;
 
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              HomeScreen(myUsername: username, myAvatarUrl: avatarUrl),
+          builder: (_) => HomeScreen(
+            myUsername: username,
+            myDisplayName: savedDisplayName,
+            myAvatarUrl: avatarUrl,
+          ),
         ),
       );
     } on Exception catch (e) {
@@ -121,23 +129,21 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // Username field
+              // ── Логін ────────────────────────────────────
               _buildTextField(
                 controller: _usernameController,
-                label: 'Логін (тільки a-z, 0-9, . _ -)',
+                label: 'Логін',
                 hint: 'Наприклад: john_doe або ivan123',
-                icon: Icons.person_outline,
+                icon: Icons.alternate_email,
                 onSubmitted: (_) => FocusScope.of(context).nextFocus(),
               ),
-              const SizedBox(height: 6),
-
-              // Підказка під полем логіну
+              const SizedBox(height: 4),
               const Padding(
                 padding: EdgeInsets.only(left: 4),
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Тільки латинські літери, цифри та . _ -',
+                    'Тільки a-z, 0-9, . _ -  •  Для входу та пошуку',
                     style: TextStyle(
                       color: SignalColors.textSecondary,
                       fontSize: 11,
@@ -147,7 +153,31 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Password field
+              // ── Псевдонім ─────────────────────────────────
+              _buildTextField(
+                controller: _displayNameController,
+                label: 'Псевдонім (необов\'язково)',
+                hint: 'Наприклад: Іван або Михайло 😊',
+                icon: Icons.badge_outlined,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              ),
+              const SizedBox(height: 4),
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Будь-яка мова, кирилиця  •  Відображається як ваше ім\'я',
+                    style: TextStyle(
+                      color: SignalColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Пароль ────────────────────────────────────
               _buildTextField(
                 controller: _passwordController,
                 label: 'Пароль (мінімум 8 символів)',
@@ -168,7 +198,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Підказка
               const Text(
                 'Якщо акаунту немає — він буде створений автоматично',
                 textAlign: TextAlign.center,
@@ -179,7 +208,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Login button
               SizedBox(
                 width: double.infinity,
                 height: 50,
