@@ -95,7 +95,7 @@ client/                          server/
 | Шар | Технологія |
 |-----|-----------|
 | Клієнт | Flutter 3.x |
-| Сервер | Node.js 20 + Express 5 + Socket.IO 4.8 |
+| Сервер | Node.js 20 + Express 5 + Socket.IO 4.8 (хостинг: Render) |
 | База даних | Firebase Firestore |
 | Сховище | Firebase Storage |
 | Push | Firebase Cloud Messaging (FCM) |
