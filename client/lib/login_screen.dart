@@ -1,8 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http_mp;
-import 'package:image_picker/image_picker.dart';
 import 'home_screen.dart';
 import 'theme.dart';
 import 'config/app_config.dart';
@@ -20,7 +16,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
-  File? _avatarFile;
 
   @override
   void dispose() {
@@ -29,22 +24,27 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 50,
-    );
-    if (image != null) setState(() => _avatarFile = File(image.path));
-  }
-
   Future<void> _login() async {
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Введіть логін та пароль')));
+      return;
+    }
+
+    // ✅ Перевірка: логін тільки латиниця/цифри/._-
+    final loginRegex = RegExp(r'^[a-zA-Z0-9._-]+$');
+    if (!loginRegex.hasMatch(username)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Введіть нікнейм та пароль')),
+        const SnackBar(
+          content: Text(
+            'Логін може містити лише латинські літери, цифри, . _ -',
+          ),
+          backgroundColor: SignalColors.danger,
+        ),
       );
       return;
     }
@@ -52,46 +52,19 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Спочатку завантажуємо аватар якщо є
-      String? uploadedAvatarUrl;
-      if (_avatarFile != null) {
-        // Завантаження без JWT (аватар при реєстрації — окремий випадок)
-        // Тимчасово використовуємо http напряму для upload під час реєстрації
-        final token = await AuthService.getToken();
-        if (token != null) {
-          // Якщо вже є токен — завантажуємо з ним
-          uploadedAvatarUrl = await _uploadAvatar(token);
-        }
-        // Якщо токена немає (перша реєстрація) — аватар завантажимо після входу
-      }
-
       final data = await AuthService.login(
         username: username,
         password: password,
-        avatarUrl: uploadedAvatarUrl,
       );
 
-      // Якщо аватар не завантажено до входу — завантажуємо тепер з токеном
-      if (_avatarFile != null && uploadedAvatarUrl == null) {
-        final token = await AuthService.getToken();
-        if (token != null) {
-          uploadedAvatarUrl = await _uploadAvatar(token);
-          // Оновлюємо локально
-          await AuthService.saveUser(
-            username: username,
-            avatarUrl: uploadedAvatarUrl,
-          );
-        }
-      }
-
-      final finalAvatarUrl = uploadedAvatarUrl ?? data['user']['avatarUrl'];
+      final avatarUrl = data['user']['avatarUrl'] as String?;
 
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (_) =>
-              HomeScreen(myUsername: username, myAvatarUrl: finalAvatarUrl),
+              HomeScreen(myUsername: username, myAvatarUrl: avatarUrl),
         ),
       );
     } on Exception catch (e) {
@@ -103,26 +76,6 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<String?> _uploadAvatar(String token) async {
-    try {
-      final request = http_mp.MultipartRequest(
-        'POST',
-        Uri.parse('${AppConfig.serverUrl}/upload'),
-      );
-      request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(
-        await http_mp.MultipartFile.fromPath('image', _avatarFile!.path),
-      );
-      final response = await request.send();
-      if (response.statusCode == 200) {
-        final body = await response.stream.bytesToString();
-        final json = jsonDecode(body);
-        return json['url'] as String?;
-      }
-    } catch (_) {}
-    return null;
   }
 
   @override
@@ -168,57 +121,29 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // Avatar picker
-              GestureDetector(
-                onTap: _pickAvatar,
-                child: Stack(
-                  alignment: Alignment.bottomRight,
-                  children: [
-                    CircleAvatar(
-                      radius: 48,
-                      backgroundColor: SignalColors.surface,
-                      backgroundImage: _avatarFile != null
-                          ? FileImage(_avatarFile!)
-                          : null,
-                      child: _avatarFile == null
-                          ? const Icon(
-                              Icons.person_outline,
-                              size: 40,
-                              color: SignalColors.textSecondary,
-                            )
-                          : null,
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: const BoxDecoration(
-                        color: SignalColors.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.add_a_photo,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Додати фото (необов\'язково)',
-                style: TextStyle(
-                  color: SignalColors.textSecondary,
-                  fontSize: 12,
-                ),
-              ),
-              const SizedBox(height: 28),
-
               // Username field
               _buildTextField(
                 controller: _usernameController,
-                label: 'Нікнейм (3–20 символів, тільки a-z, 0-9)',
+                label: 'Логін (тільки a-z, 0-9, . _ -)',
+                hint: 'Наприклад: john_doe або ivan123',
                 icon: Icons.person_outline,
                 onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              ),
+              const SizedBox(height: 6),
+
+              // Підказка під полем логіну
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Тільки латинські літери, цифри та . _ -',
+                    style: TextStyle(
+                      color: SignalColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
 
@@ -301,6 +226,7 @@ class _LoginScreenState extends State<LoginScreen> {
     required TextEditingController controller,
     required String label,
     required IconData icon,
+    String? hint,
     bool obscureText = false,
     Widget? suffixIcon,
     void Function(String)? onSubmitted,
@@ -311,8 +237,13 @@ class _LoginScreenState extends State<LoginScreen> {
       style: const TextStyle(color: SignalColors.textPrimary, fontSize: 15),
       decoration: InputDecoration(
         labelText: label,
+        hintText: hint,
         labelStyle: const TextStyle(
           color: SignalColors.textSecondary,
+          fontSize: 13,
+        ),
+        hintStyle: const TextStyle(
+          color: SignalColors.textDisabled,
           fontSize: 13,
         ),
         filled: true,

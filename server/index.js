@@ -64,12 +64,14 @@ const searchLimiter = rateLimit({
 // 🔐 JOI СХЕМИ ВАЛІДАЦІЇ
 // ==========================================
 const authSchema = Joi.object({
-  username: Joi.string().min(3).max(20).pattern(/^[\w\u0400-\u04FFа-яА-ЯіІїЇєЄ' ._-]+$/).required()
+  // ✅ Логін — тільки латиниця, цифри, крапка, підкреслення, дефіс
+  // Кирилиця НЕ дозволена — логін використовується як унікальний ідентифікатор
+  username: Joi.string().min(3).max(20).pattern(/^[a-zA-Z0-9._-]+$/).required()
     .messages({
-      'string.alphanum': "Нікнейм може містити тільки літери та цифри",
-      'string.min': "Нікнейм мінімум 3 символи",
-      'string.max': "Нікнейм максимум 20 символів",
-      'any.required': "Нікнейм обов'язковий",
+      'string.pattern.base': "Логін може містити тільки латинські літери (a-z), цифри та символи . _ -",
+      'string.min': "Логін мінімум 3 символи",
+      'string.max': "Логін максимум 20 символів",
+      'any.required': "Логін обов'язковий",
     }),
   password: Joi.string().min(8).required()
     .messages({
@@ -420,7 +422,7 @@ io.use((socket, next) => {
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('Messenger Y Server v2.4.0 🔐');
+  res.send('Messenger Y Server v2.4.1 🔐');
 });
 
 app.get('/ping', (req, res) => {
@@ -639,7 +641,7 @@ io.on('connection', async (socket) => {
 // ✅ Graceful Shutdown
 // ==========================================
 server.listen(PORT, () => {
-  console.log(`🔐 Messenger Y Server v2.4.0 running on port ${PORT}`);
+  console.log(`🔐 Messenger Y Server v2.4.1 running on port ${PORT}`);
 });
 
 const shutdown = () => {
