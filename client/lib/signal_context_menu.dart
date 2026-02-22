@@ -91,10 +91,69 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.of(context).size;
-    final showBelow = widget.position.dy < screen.height / 2;
+    final safePad = MediaQuery.of(context).padding;
 
-    const reactionBarH = 60.0;
-    const menuH = 260.0;
+    const reactionBarH = 52.0;
+    const reactionBarMarginV = 8.0;
+    const menuH = 200.0;
+    const menuW = 210.0;
+    const edgePad = 12.0;
+
+    // Доступна зона екрана
+    final areaTop = safePad.top + edgePad;
+    final areaBottom = screen.height - safePad.bottom - edgePad;
+
+    // Позиція оригінального повідомлення
+    final msgTop = widget.position.dy;
+
+    // КЛЮЧОВА ПРАВКА: обмежуємо висоту копії до 40% екрана.
+    // Це не чіпає оригінал у чаті — тільки копію в оверлеї.
+    // Завдяки цьому меню і реакції завжди мають місце.
+    final cappedMsgH = widget.size.height.clamp(0.0, screen.height * 0.40);
+    final msgBottom = msgTop + cappedMsgH;
+
+    // Вирішуємо: меню знизу чи зверху?
+    // Знизу якщо там вистачає місця на меню + реакції + відступи
+    final spaceBelow = areaBottom - msgBottom;
+    final showMenuBelow =
+        spaceBelow >= menuH + reactionBarH + reactionBarMarginV * 2 + 16;
+
+    // Позиція меню
+    double menuTop;
+    if (showMenuBelow) {
+      menuTop = msgBottom + 10;
+    } else {
+      menuTop = msgTop - menuH - 10;
+    }
+    menuTop = menuTop.clamp(areaTop, areaBottom - menuH);
+
+    // Позиція реакцій — НЕ перетинаються з меню
+    double reactionTop;
+    if (showMenuBelow) {
+      // Меню знизу → реакції над повідомленням
+      reactionTop = msgTop - reactionBarH - reactionBarMarginV;
+    } else {
+      // Меню зверху → реакції між нижнім краєм меню і повідомленням
+      reactionTop = menuTop + menuH + reactionBarMarginV;
+    }
+    reactionTop = reactionTop.clamp(areaTop, areaBottom - reactionBarH);
+    // Гарантуємо що реакції не налізають на меню зверху
+    if (!showMenuBelow && reactionTop < menuTop + menuH + 4) {
+      reactionTop = menuTop + menuH + 4;
+    }
+
+    // Горизонтальне вирівнювання меню
+    double? menuLeft;
+    double? menuRight;
+    if (widget.isMe) {
+      menuRight = edgePad;
+      if (screen.width - edgePad - menuW < edgePad) {
+        menuRight = null;
+        menuLeft = edgePad;
+      }
+    } else {
+      menuLeft = edgePad;
+    }
 
     return DefaultTextStyle(
       style: const TextStyle(
@@ -104,28 +163,33 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
       ),
       child: Stack(
         children: [
-          // ── Solid dark overlay (NO blur) ────────────────
+          // Затемнений фон
           GestureDetector(
             onTap: () => Navigator.of(context).pop(),
             child: Container(color: Colors.black.withOpacity(0.7)),
           ),
 
-          // ── Copy of message ─────────────────────────────
+          // Копія повідомлення — обмежена по висоті через ClipRect
           Positioned(
-            top: widget.position.dy,
+            top: msgTop,
             left: widget.position.dx,
             width: widget.size.width,
-            child: Material(
-              color: Colors.transparent,
-              child: widget.messageChild,
+            child: ClipRect(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: cappedMsgH),
+                child: Material(
+                  color: Colors.transparent,
+                  child: widget.messageChild,
+                ),
+              ),
             ),
           ),
 
-          // ── Reaction bar ─────────────────────────────────
+          // Панель реакцій
           Positioned(
-            top: widget.position.dy - reactionBarH - 10,
-            left: 20,
-            right: 20,
+            top: reactionTop,
+            left: edgePad,
+            right: edgePad,
             child: ScaleTransition(
               scale: _scaleAnim,
               child: _ReactionBar(
@@ -137,14 +201,12 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay>
             ),
           ),
 
-          // ── Action menu ──────────────────────────────────
+          // Меню дій
           Positioned(
-            top: showBelow
-                ? widget.position.dy + widget.size.height + 10
-                : widget.position.dy - menuH - 80,
-            left: widget.isMe ? null : 20,
-            right: widget.isMe ? 20 : null,
-            width: 210,
+            top: menuTop,
+            left: menuLeft,
+            right: menuRight,
+            width: menuW,
             child: FadeTransition(
               opacity: _fadeAnim,
               child: _ActionMenu(

@@ -6,10 +6,13 @@ import '../audio_player_widget.dart';
 import 'reply_preview.dart';
 import 'reaction_widgets.dart';
 
+// Кількість рядків після яких показується "Читати далі"
+const int _kCollapsedLines = 8;
+
 // =======================
-// 💬 MessageBubble з Reply
+// 💬 MessageBubble з Reply + Read More
 // =======================
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends StatefulWidget {
   final String text;
   final String sender;
   final String? imageUrl;
@@ -46,15 +49,34 @@ class MessageBubble extends StatelessWidget {
   });
 
   @override
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<MessageBubble> {
+  bool _isExpanded = false;
+
+  // Перевіряємо чи текст довгий (грубо: >_kCollapsedLines рядків ~60 символів/рядок)
+  // Точна перевірка через TextPainter занадто дорога — використовуємо евристику
+  bool _needsCollapse(String text) {
+    if (text.length < 300) return false; // Короткий текст — не ховаємо
+    final newlines = '\n'.allMatches(text).length;
+    if (newlines >= _kCollapsedLines) return true;
+    // Приблизно: якщо текст > ~480 символів (8 рядків × ~60 симв.)
+    return text.length > 480;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final timeText = _formatTime(timestamp);
+    final timeText = _formatTime(widget.timestamp);
+    final bool longText = widget.text.isNotEmpty && _needsCollapse(widget.text);
+
     return Column(
-      crossAxisAlignment: isMe
+      crossAxisAlignment: widget.isMe
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
       children: [
         Align(
-          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
             constraints: BoxConstraints(
@@ -63,14 +85,16 @@ class MessageBubble extends StatelessWidget {
                   AppSizes.bubbleMaxWidthRatio,
             ),
             decoration: BoxDecoration(
-              color: isMe ? SignalColors.outgoing : SignalColors.incoming,
+              color: widget.isMe
+                  ? SignalColors.outgoing
+                  : SignalColors.incoming,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(AppSizes.bubbleRadius),
                 topRight: const Radius.circular(AppSizes.bubbleRadius),
-                bottomLeft: isMe
+                bottomLeft: widget.isMe
                     ? const Radius.circular(AppSizes.bubbleRadius)
                     : const Radius.circular(4),
-                bottomRight: isMe
+                bottomRight: widget.isMe
                     ? const Radius.circular(4)
                     : const Radius.circular(AppSizes.bubbleRadius),
               ),
@@ -80,11 +104,12 @@ class MessageBubble extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (!isMe)
+                  // Ім'я відправника (тільки для чужих)
+                  if (!widget.isMe)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
-                        sender,
+                        widget.sender,
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: AppColors.mainColor.withOpacity(0.9),
@@ -92,37 +117,82 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-                  if (replyTo != null)
-                    ReplyPreview(replyTo: replyTo, isMe: isMe, onTap: () {}),
-                  if (imageUrl != null)
+
+                  // Reply preview
+                  if (widget.replyTo != null)
+                    ReplyPreview(
+                      replyTo: widget.replyTo,
+                      isMe: widget.isMe,
+                      onTap: () {},
+                    ),
+
+                  // Фото
+                  if (widget.imageUrl != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.network(imageUrl!, fit: BoxFit.cover),
+                        child: Image.network(
+                          widget.imageUrl!,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
-                  if (audioUrl != null)
+
+                  // Аудіо
+                  if (widget.audioUrl != null)
                     AudioMessagePlayer(
-                      audioUrl: audioUrl!,
-                      duration: audioDuration,
-                      isMe: isMe,
+                      audioUrl: widget.audioUrl!,
+                      duration: widget.audioDuration,
+                      isMe: widget.isMe,
                     ),
-                  if (text.isNotEmpty)
+
+                  // ── Текст з Read More ──────────────────────
+                  if (widget.text.isNotEmpty) ...[
                     Text(
-                      text,
+                      widget.text,
+                      // Якщо довгий і не розгорнутий — обрізаємо
+                      maxLines: longText && !_isExpanded
+                          ? _kCollapsedLines
+                          : null,
+                      overflow: longText && !_isExpanded
+                          ? TextOverflow.ellipsis
+                          : TextOverflow.visible,
                       style: const TextStyle(
                         fontSize: AppSizes.bubbleFontSize,
                         color: Colors.white,
                         height: 1.3,
                       ),
                     ),
+
+                    // Кнопка "Читати далі" / "Згорнути"
+                    if (longText)
+                      GestureDetector(
+                        onTap: () => setState(() => _isExpanded = !_isExpanded),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            _isExpanded ? 'Згорнути ▲' : 'Читати далі ▼',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: widget.isMe
+                                  ? Colors.white.withOpacity(0.75)
+                                  : AppColors.mainColor.withOpacity(0.85),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+
                   const SizedBox(height: 4),
+
+                  // Час + статус прочитання
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      if (edited) ...[
+                      if (widget.edited) ...[
                         Text(
                           'ред.',
                           style: TextStyle(
@@ -140,12 +210,12 @@ class MessageBubble extends StatelessWidget {
                           color: Colors.white.withOpacity(0.6),
                         ),
                       ),
-                      if (isMe) ...[
+                      if (widget.isMe) ...[
                         const SizedBox(width: 5),
                         Icon(
-                          isRead ? Icons.done_all : Icons.check,
+                          widget.isRead ? Icons.done_all : Icons.check,
                           size: 14,
-                          color: isRead
+                          color: widget.isRead
                               ? Colors.white
                               : Colors.white.withOpacity(0.6),
                         ),
@@ -157,16 +227,20 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
         ),
-        if (reactions != null && reactions!.isNotEmpty)
+
+        // Реакції
+        if (widget.reactions != null && widget.reactions!.isNotEmpty)
           Transform.translate(
             offset: const Offset(0, -10),
             child: Padding(
               padding: const EdgeInsets.only(left: 8, right: 8),
               child: ReactionsDisplay(
-                reactions: reactions,
-                currentUsername: currentUsername,
+                reactions: widget.reactions,
+                currentUsername: widget.currentUsername,
                 onReactionTap: (emoji) {
-                  if (onReactionTap != null) onReactionTap!(messageId, emoji);
+                  if (widget.onReactionTap != null) {
+                    widget.onReactionTap!(widget.messageId, emoji);
+                  }
                 },
               ),
             ),
