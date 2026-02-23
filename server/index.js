@@ -443,6 +443,33 @@ app.get('/get_user_chats', verifyJWT, async (req, res) => {
   }
 });
 
+
+// ==========================================
+// ✏️ 7. ОНОВЛЕННЯ ПРОФІЛЮ (захищено)
+// Поля: displayName, avatarUrl, phone, birthday, birthdayVisible, onlineVisible
+// ==========================================
+app.post('/update_profile', verifyJWT, async (req, res) => {
+  const username = req.user.username;
+  const allowed = ['displayName', 'avatarUrl', 'phone', 'birthday', 'birthdayVisible', 'onlineVisible'];
+  const updates = {};
+  for (const key of allowed) {
+    if (key in req.body) updates[key] = req.body[key];
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Немає полів для оновлення' });
+  }
+  try {
+    const snapshot = await db.collection('users').where('username', '==', username).get();
+    if (snapshot.empty) return res.status(404).json({ error: 'Користувача не знайдено' });
+    await snapshot.docs[0].ref.update(updates);
+    // Якщо змінили displayName — оновлюємо в SharedPrefs через відповідь
+    res.json({ ok: true, updated: Object.keys(updates) });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    res.status(500).json({ error: 'Помилка оновлення профілю' });
+  }
+});
+
 // ==========================================
 // 🚀 SOCKET.IO СЕРВЕР
 // ==========================================
