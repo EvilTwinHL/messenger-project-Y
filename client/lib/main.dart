@@ -319,6 +319,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!AppConfig.firebaseAvailable) {
         _socketSvc.requestHistory(widget.chatId);
       }
+      // Позначаємо повідомлення від співрозмовника як прочитані
+      _socketSvc.socket.emit('mark_read', {
+        'chatId': widget.chatId,
+        'readerUsername': myName,
+      });
     });
 
     _socketSvc.on('receive_message', (data) {
@@ -399,6 +404,27 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
+    });
+
+    // ✓✓ Оновлення статусу повідомлень (sent → delivered → read)
+    _socketSvc.on('message_status_update', (data) {
+      if (!mounted) return;
+      final d = Map<String, dynamic>.from(data as Map);
+      final msgId = d['messageId'] as String?;
+      final newStatus = d['status'] as String?;
+      if (msgId == null || newStatus == null) return;
+
+      if (AppConfig.firebaseAvailable) {
+        // Firebase: Firestore stream оновить автоматично
+        return;
+      }
+      // Windows: оновлюємо локальний список
+      setState(() {
+        final idx = _localMessages.indexWhere((m) => m['id'] == msgId);
+        if (idx != -1) {
+          _localMessages[idx] = {..._localMessages[idx], 'status': newStatus};
+        }
+      });
     });
 
     _socketSvc.on('display_typing', (data) {
@@ -757,7 +783,7 @@ class _ChatScreenState extends State<ChatScreen> {
         sender: message['sender'] ?? 'Anon',
         isMe: isMe,
         timestamp: message['timestamp'],
-        isRead: message['read'] == true,
+        status: message['status'] as String?,
         replyTo: message['replyTo'],
         reactions: message['reactions'],
         messageId: msgId,
@@ -1345,7 +1371,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               sender: msg['sender'] ?? 'Anon',
                               isMe: isMe,
                               timestamp: msg['timestamp'],
-                              isRead: msg['read'] == true,
+                              status: msg['status'] as String?,
                               replyTo: msg['replyTo'],
                               reactions: msg['reactions'],
                               messageId: msgId,

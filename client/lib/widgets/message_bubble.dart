@@ -21,7 +21,10 @@ class MessageBubble extends StatefulWidget {
   final bool isMe;
   final dynamic timestamp;
   final String? avatarUrl;
-  final bool isRead;
+
+  /// Статус повідомлення: "sent" | "delivered" | "read"
+  /// null — fallback до старої логіки isRead
+  final String? status;
   final Map? replyTo;
   final Map<String, dynamic>? reactions;
   final String messageId;
@@ -39,7 +42,7 @@ class MessageBubble extends StatefulWidget {
     this.audioDuration,
     this.timestamp,
     this.avatarUrl,
-    this.isRead = false,
+    this.status,
     this.replyTo,
     this.reactions,
     required this.messageId,
@@ -212,13 +215,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                       ),
                       if (widget.isMe) ...[
                         const SizedBox(width: 5),
-                        Icon(
-                          widget.isRead ? Icons.done_all : Icons.check,
-                          size: 14,
-                          color: widget.isRead
-                              ? Colors.white
-                              : Colors.white.withOpacity(0.6),
-                        ),
+                        _StatusIcon(status: widget.status),
                       ],
                     ],
                   ),
@@ -273,3 +270,36 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 }
+
+// ══════════════════════════════════════════════════════════
+// ✓ Іконка статусу повідомлення
+// ══════════════════════════════════════════════════════════
+class _StatusIcon extends StatelessWidget {
+  final String? status;
+  const _StatusIcon({this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case 'read':
+        // ✓✓ сині — прочитано
+        return const Icon(Icons.done_all, size: 14, color: Color(0xFF4FC3F7));
+      case 'delivered':
+        // ✓✓ сірі — доставлено
+        return Icon(
+          Icons.done_all,
+          size: 14,
+          color: Colors.white.withOpacity(0.55),
+        );
+      case 'sent':
+      default:
+        // ✓ сірий — відправлено на сервер
+        return Icon(
+          Icons.check,
+          size: 14,
+          color: Colors.white.withOpacity(0.55),
+        );
+    }
+  }
+}
+//---
