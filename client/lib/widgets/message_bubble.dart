@@ -272,7 +272,10 @@ class _MessageBubbleState extends State<MessageBubble> {
 }
 
 // ══════════════════════════════════════════════════════════
-// ✓ Іконка статусу повідомлення
+// ✓ Signal-style іконка статусу повідомлення
+// sent     = 1 кружок (контур) + галочка
+// delivered = 2 кружки (контур) + галочка
+// read     = 2 кружки (заповнені сині) + галочка
 // ══════════════════════════════════════════════════════════
 class _StatusIcon extends StatelessWidget {
   final String? status;
@@ -282,24 +285,100 @@ class _StatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (status) {
       case 'read':
-        // ✓✓ сині — прочитано
-        return const Icon(Icons.done_all, size: 14, color: Color(0xFF4FC3F7));
+        return const _SignalStatus(circles: 2, filled: true);
       case 'delivered':
-        // ✓✓ сірі — доставлено
-        return Icon(
-          Icons.done_all,
-          size: 14,
-          color: Colors.white.withOpacity(0.55),
-        );
+        return const _SignalStatus(circles: 2, filled: false);
       case 'sent':
       default:
-        // ✓ сірий — відправлено на сервер
-        return Icon(
-          Icons.check,
-          size: 14,
-          color: Colors.white.withOpacity(0.55),
-        );
+        return const _SignalStatus(circles: 1, filled: false);
     }
   }
 }
-//---
+
+class _SignalStatus extends StatelessWidget {
+  final int circles; // 1 = sent, 2 = delivered/read
+  final bool filled; // true = read (сині), false = сірі
+
+  const _SignalStatus({required this.circles, required this.filled});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: circles == 2 ? 22 : 14,
+      height: 14,
+      child: CustomPaint(
+        painter: _StatusPainter(circles: circles, filled: filled),
+      ),
+    );
+  }
+}
+
+class _StatusPainter extends CustomPainter {
+  final int circles;
+  final bool filled;
+
+  const _StatusPainter({required this.circles, required this.filled});
+
+  static const _blue = Color(0xFF4FC3F7);
+  static const _grey = Color(0x8DFFFFFF); // білий 55%
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final color = filled ? _blue : _grey;
+    final r = size.height / 2; // радіус кружечка = 7px
+
+    final circlePaint = Paint()
+      ..color = color
+      ..style = filled ? PaintingStyle.fill : PaintingStyle.stroke
+      ..strokeWidth = 1.3;
+
+    final checkPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    if (circles == 1) {
+      // Один кружок по центру
+      canvas.drawCircle(Offset(r, r), r - 0.8, circlePaint);
+      _drawCheck(canvas, checkPaint, Offset(r, r), r * 0.55);
+    } else {
+      // Два кружки: лівий трохи менш прозорий (якщо outline)
+      // Лівий кружок
+      final leftCenter = Offset(r, r);
+      // Правий кружок — зміщений вправо, перекриває лівий
+      final rightCenter = Offset(r * 2.1, r);
+
+      // Малюємо лівий першим (він "під" правим)
+      if (!filled) {
+        // Outline: ліворуч трохи прозоріший щоб видно перекриття
+        final leftPaint = Paint()
+          ..color = color.withOpacity(0.6)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.3;
+        canvas.drawCircle(leftCenter, r - 0.8, leftPaint);
+      } else {
+        canvas.drawCircle(leftCenter, r - 0.8, circlePaint);
+      }
+      // Правий кружок
+      canvas.drawCircle(rightCenter, r - 0.8, circlePaint);
+
+      // Галочка тільки в правому кружку
+      _drawCheck(canvas, checkPaint, rightCenter, r * 0.55);
+    }
+  }
+
+  // Малює мінімалістичну галочку ✓ навколо центру
+  void _drawCheck(Canvas canvas, Paint paint, Offset center, double size) {
+    final path = Path()
+      ..moveTo(center.dx - size * 0.65, center.dy)
+      ..lineTo(center.dx - size * 0.1, center.dy + size * 0.55)
+      ..lineTo(center.dx + size * 0.65, center.dy - size * 0.55);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(_StatusPainter old) =>
+      old.circles != circles || old.filled != filled;
+}

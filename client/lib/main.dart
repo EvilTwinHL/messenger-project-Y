@@ -248,6 +248,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // На Android/iOS використовується Firestore StreamBuilder
   final List<Map<String, dynamic>> _localMessages = [];
 
+  // Локальний кеш статусів — перекриває дані з Firestore/localMessages
+  // Оновлюється через socket 'message_status_update' в реалтаймі
+  final Map<String, String> _messageStatuses = {};
+
   @override
   void initState() {
     super.initState();
@@ -414,15 +418,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final newStatus = d['status'] as String?;
       if (msgId == null || newStatus == null) return;
 
-      if (AppConfig.firebaseAvailable) {
-        // Firebase: Firestore stream оновить автоматично
-        return;
-      }
-      // Windows: оновлюємо локальний список
+      // Оновлюємо локальний кеш статусів для ОБОХ режимів (Firebase і Windows)
+      // Це дає миттєве оновлення без очікування Firestore stream
       setState(() {
-        final idx = _localMessages.indexWhere((m) => m['id'] == msgId);
-        if (idx != -1) {
-          _localMessages[idx] = {..._localMessages[idx], 'status': newStatus};
+        _messageStatuses[msgId] = newStatus;
+        // Windows: також оновлюємо в _localMessages
+        if (!AppConfig.firebaseAvailable) {
+          final idx = _localMessages.indexWhere((m) => m['id'] == msgId);
+          if (idx != -1) {
+            _localMessages[idx] = {..._localMessages[idx], 'status': newStatus};
+          }
         }
       });
     });
@@ -783,7 +788,7 @@ class _ChatScreenState extends State<ChatScreen> {
         sender: message['sender'] ?? 'Anon',
         isMe: isMe,
         timestamp: message['timestamp'],
-        status: message['status'] as String?,
+        status: _messageStatuses[msgId] ?? message['status'] as String?,
         replyTo: message['replyTo'],
         reactions: message['reactions'],
         messageId: msgId,
@@ -1371,7 +1376,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               sender: msg['sender'] ?? 'Anon',
                               isMe: isMe,
                               timestamp: msg['timestamp'],
-                              status: msg['status'] as String?,
+                              status:
+                                  _messageStatuses[msgId] ??
+                                  msg['status'] as String?,
                               replyTo: msg['replyTo'],
                               reactions: msg['reactions'],
                               messageId: msgId,

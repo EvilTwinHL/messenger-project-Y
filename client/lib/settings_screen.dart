@@ -16,7 +16,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _updater = ShorebirdUpdater();
   bool _checkingUpdate = false;
   String _updateStatus = '';
-  final String _appVersion = '2.6.2';
+  final String _appVersion = '2.6.3';
   int? _patchNumber;
 
   // Налаштування
