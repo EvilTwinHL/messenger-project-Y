@@ -470,6 +470,40 @@ app.post('/update_profile', verifyJWT, async (req, res) => {
   }
 });
 
+
+// ==========================================
+// 📱 8. АКАУНТИ ПО ТЕЛЕФОНУ (без авторизації)
+// При запуску додатку — якщо є збережений телефон,
+// шукаємо акаунти прив'язані до нього.
+// Повертає тільки публічні дані (без passwordHash).
+// Один номер може бути прив'язаний до кількох акаунтів.
+// ==========================================
+app.get('/accounts_by_phone', async (req, res) => {
+  const phone = req.query.phone;
+  if (!phone || phone.length < 7) return res.json([]);
+
+  try {
+    const snapshot = await db.collection('users')
+      .where('phone', '==', phone)
+      .limit(5)
+      .get();
+
+    const accounts = snapshot.docs.map(doc => {
+      const d = doc.data();
+      return {
+        username: d.username,
+        displayName: d.displayName || d.username,
+        avatarUrl: d.avatarUrl || null,
+      };
+    });
+
+    res.json(accounts);
+  } catch (err) {
+    console.error('accounts_by_phone error:', err);
+    res.json([]); // Не ламаємо запуск додатку — просто порожній список
+  }
+});
+
 // ==========================================
 // 🚀 SOCKET.IO СЕРВЕР
 // ==========================================
