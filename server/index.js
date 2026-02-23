@@ -665,18 +665,22 @@ io.on('connection', async (socket) => {
     // Одразу перевіряємо чи отримувач вже в кімнаті (онлайн в чаті)
     // Якщо так — одразу delivered, без очікування join_chat
     try {
-      const room = io.sockets.adapter.rooms.get(chatId);
-      const socketsInRoom = room ? [...room] : [];
-      const recipientOnline = socketsInRoom.some(sid => {
-        const s = io.sockets.sockets.get(sid);
-        return s && s.username !== sender;
-      });
+      // Перевіряємо всі сокети сервера — чи хтось з отримувачів онлайн
+      const chatDoc2 = await db.collection('chats').doc(chatId).get();
+      const chatRecipients = ((chatDoc2.data() || {}).participants || []).filter(u => u !== sender);
+      const connectedUsernames = new Set(
+        [...io.sockets.sockets.values()]
+          .filter(s => s.username)
+          .map(s => s.username)
+      );
+      const recipientOnline = chatRecipients.some(u => connectedUsernames.has(u));
       if (recipientOnline) {
         await docRef.update({ status: 'delivered' });
         io.to(chatId).emit('message_status_update', {
           messageId: docRef.id,
           status: 'delivered',
         });
+        console.log(`[DELIVERED instantly] to ${chatRecipients.join(',')}`);
       }
     } catch (err) {
       console.error('[send_message delivered check] Error:', err);
