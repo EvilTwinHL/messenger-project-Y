@@ -333,6 +333,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketSvc.on('receive_message', (data) {
       if (!mounted) return;
       final msg = Map<String, dynamic>.from(data as Map);
+      // Одразу кешуємо статус нового повідомлення
+      final newId = msg['id'] as String?;
+      final newStatus = msg['status'] as String?;
+      if (newId != null) {
+        _messageStatuses[newId] = newStatus ?? 'sent';
+      }
 
       if (!AppConfig.firebaseAvailable) {
         // Windows: додаємо повідомлення в локальний список
@@ -357,8 +363,15 @@ class _ChatScreenState extends State<ChatScreen> {
             .toList();
         setState(() {
           _localMessages.clear();
-          // Реверс: ListView reverse:true, тому новіші першими (index 0)
           _localMessages.addAll(list.reversed);
+          // Заповнюємо кеш статусів з історії
+          for (final msg in list) {
+            final id = msg['id'] as String?;
+            final status = msg['status'] as String?;
+            if (id != null && status != null) {
+              _messageStatuses[id] = status;
+            }
+          }
         });
       }
     });

@@ -315,66 +315,64 @@ class _SignalStatus extends StatelessWidget {
 
 class _StatusPainter extends CustomPainter {
   final int circles;
+  // filled тепер означає "read" стиль:
+  // false = сірий контур (sent/delivered)
+  // true  = синій контур БЕЗ заливки (read) — "інвертований"
   final bool filled;
 
   const _StatusPainter({required this.circles, required this.filled});
 
-  static const _blue = Color(0xFF4FC3F7);
+  // Синій колір для "read" — колір бабл-фону відправника
+  static const _blue = Color(0xFF2B5CE6);
+  // Сірий для sent/delivered
   static const _grey = Color(0x8DFFFFFF); // білий 55%
 
   @override
   void paint(Canvas canvas, Size size) {
     final color = filled ? _blue : _grey;
-    final r = size.height / 2; // радіус кружечка = 7px
+    final r = size.height / 2;
 
+    // Кружок — завжди тільки контур (stroke), без заливки
     final circlePaint = Paint()
       ..color = color
-      ..style = filled ? PaintingStyle.fill : PaintingStyle.stroke
-      ..strokeWidth = 1.3;
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = filled ? 1.6 : 1.3;
 
     final checkPaint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3
+      ..strokeWidth = filled ? 1.6 : 1.3
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
     if (circles == 1) {
-      // Один кружок по центру
-      canvas.drawCircle(Offset(r, r), r - 0.8, circlePaint);
-      _drawCheck(canvas, checkPaint, Offset(r, r), r * 0.55);
+      final center = Offset(r, r);
+      canvas.drawCircle(center, r - 0.8, circlePaint);
+      _drawCheck(canvas, checkPaint, center, r * 0.52);
     } else {
-      // Два кружки: лівий трохи менш прозорий (якщо outline)
-      // Лівий кружок
       final leftCenter = Offset(r, r);
-      // Правий кружок — зміщений вправо, перекриває лівий
-      final rightCenter = Offset(r * 2.1, r);
+      final rightCenter = Offset(r * 2.15, r);
 
-      // Малюємо лівий першим (він "під" правим)
-      if (!filled) {
-        // Outline: ліворуч трохи прозоріший щоб видно перекриття
-        final leftPaint = Paint()
-          ..color = color.withOpacity(0.6)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.3;
-        canvas.drawCircle(leftCenter, r - 0.8, leftPaint);
-      } else {
-        canvas.drawCircle(leftCenter, r - 0.8, circlePaint);
-      }
-      // Правий кружок
+      // Лівий — трохи прозоріший для ефекту глибини
+      final leftPaint = Paint()
+        ..color = color.withOpacity(filled ? 0.65 : 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = filled ? 1.6 : 1.3;
+      canvas.drawCircle(leftCenter, r - 0.8, leftPaint);
+
+      // Правий поверх лівого
       canvas.drawCircle(rightCenter, r - 0.8, circlePaint);
 
-      // Галочка тільки в правому кружку
-      _drawCheck(canvas, checkPaint, rightCenter, r * 0.55);
+      // Галочка тільки в правому
+      _drawCheck(canvas, checkPaint, rightCenter, r * 0.52);
     }
   }
 
-  // Малює мінімалістичну галочку ✓ навколо центру
   void _drawCheck(Canvas canvas, Paint paint, Offset center, double size) {
     final path = Path()
       ..moveTo(center.dx - size * 0.65, center.dy)
-      ..lineTo(center.dx - size * 0.1, center.dy + size * 0.55)
-      ..lineTo(center.dx + size * 0.65, center.dy - size * 0.55);
+      ..lineTo(center.dx - size * 0.08, center.dy + size * 0.58)
+      ..lineTo(center.dx + size * 0.65, center.dy - size * 0.52);
     canvas.drawPath(path, paint);
   }
 
