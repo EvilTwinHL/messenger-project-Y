@@ -554,21 +554,24 @@ io.on('connection', async (socket) => {
     socket.join(chatId);
     console.log(`${socket.username} зайшов у кімнату: ${chatId}`);
 
-    // Позначаємо повідомлення від інших як delivered (якщо були sent)
+    // Позначаємо повідомлення від інших як delivered
+    // Уникаємо compound query (потребує composite index) — фільтруємо в JS
     try {
       const msgsRef = db.collection('chats').doc(chatId).collection('messages');
       const snap = await msgsRef
         .where('status', '==', 'sent')
-        .where('sender', '!=', socket.username)
         .get();
 
-      if (!snap.empty) {
-        const batch = db.batch();
-        snap.docs.forEach(doc => batch.update(doc.ref, { status: 'delivered' }));
-        await batch.commit();
+      // Фільтруємо в JS: тільки чужі повідомлення
+      const toUpdate = snap.docs.filter(doc => doc.data().sender !== socket.username);
 
-        // Сповіщаємо відправника що повідомлення доставлені
-        snap.docs.forEach(doc => {
+      if (toUpdate.length > 0) {
+        const batch = db.batch();
+        toUpdate.forEach(doc => batch.update(doc.ref, { status: 'delivered' }));
+        await batch.commit();
+        console.log(`[DELIVERED] ${toUpdate.length} msgs in ${chatId} for ${socket.username}`);
+
+        toUpdate.forEach(doc => {
           io.to(chatId).emit('message_status_update', {
             messageId: doc.id,
             status: 'delivered',
@@ -576,7 +579,7 @@ io.on('connection', async (socket) => {
         });
       }
     } catch (err) {
-      console.error('Delivered update error:', err);
+      console.error('[join_chat delivered] Error:', err);
     }
   });
 
@@ -722,19 +725,24 @@ io.on('connection', async (socket) => {
 
     try {
       const msgsRef = db.collection('chats').doc(chatId).collection('messages');
-      // Всі повідомлення від інших (sent або delivered) → read
-      const snap = await msgsRef
-        .where('sender', '!=', readerUsername)
-        .where('status', 'in', ['sent', 'delivered'])
-        .get();
 
-      if (!snap.empty) {
+      // Два окремих простих запити — не потребують composite index
+      const [sentSnap, deliveredSnap] = await Promise.all([
+        msgsRef.where('status', '==', 'sent').get(),
+        msgsRef.where('status', '==', 'delivered').get(),
+      ]);
+
+      // Об'єднуємо і фільтруємо в JS: тільки чужі повідомлення
+      const allDocs = [...sentSnap.docs, ...deliveredSnap.docs]
+        .filter(doc => doc.data().sender !== readerUsername);
+
+      if (allDocs.length > 0) {
         const batch = db.batch();
-        snap.docs.forEach(doc => batch.update(doc.ref, { status: 'read', read: true }));
+        allDocs.forEach(doc => batch.update(doc.ref, { status: 'read', read: true }));
         await batch.commit();
+        console.log(`[READ] ${allDocs.length} msgs in ${chatId} by ${readerUsername}`);
 
-        // Сповіщаємо всіх у кімнаті (відправник побачить сині галочки)
-        snap.docs.forEach(doc => {
+        allDocs.forEach(doc => {
           io.to(chatId).emit('message_status_update', {
             messageId: doc.id,
             status: 'read',
@@ -742,10 +750,9 @@ io.on('connection', async (socket) => {
         });
       }
 
-      // Оновлюємо lastMessage.read у чаті
       await db.collection('chats').doc(chatId).update({ 'lastMessage.read': true });
     } catch (err) {
-      console.error('mark_read error:', err);
+      console.error('[mark_read] Error:', err);
     }
   });
 
