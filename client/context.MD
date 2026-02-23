@@ -1,4 +1,4 @@
-# 🗂 MESSENGER Y — PROJECT CONTEXT v2.4.3
+# 🗂 MESSENGER Y — PROJECT CONTEXT v2.6.8
 > Вставляй цей файл першим повідомленням у новому чаті.
 > Після цього додавай ТІЛЬКИ той файл, з яким зараз працюєш.
 
@@ -20,7 +20,7 @@
 
 ---
 
-## 🗂 СТРУКТУРА ФАЙЛІВ (актуальна v2.4.3)
+## 🗂 СТРУКТУРА ФАЙЛІВ (актуальна v2.6.8)
 
 ```
 client/
@@ -28,31 +28,31 @@ client/
 ├── pubspec.yaml
 └── lib/
     ├── config/
-    │   └── app_config.dart        # AppConfig.serverUrl (з .env) + AppConfig.firebaseAvailable
+    │   └── app_config.dart        # AppConfig.serverUrl + AppConfig.firebaseAvailable
     ├── services/
-    │   ├── socket_service.dart    # SocketService singleton — init({required String token})
-    │   └── auth_service.dart      # AuthService — login, logout, getToken, refreshToken
+    │   ├── socket_service.dart    # SocketService singleton
+    │   └── auth_service.dart      # login, logout, getToken, saveUser, getSavedDisplayName
     ├── utils/
-    │   └── date_utils.dart        # ChatDateUtils: formatTime, dateLabel, parseDate, isSameDay
+    │   └── date_utils.dart        # ChatDateUtils
     ├── widgets/
-    │   ├── message_bubble.dart
+    │   ├── message_bubble.dart    # status: "sent"|"delivered"|"read" + Signal-style іконки
     │   ├── swipe_to_reply.dart
     │   ├── typing_indicator.dart
     │   ├── date_separator.dart
     │   ├── reply_preview.dart
     │   └── reaction_widgets.dart
-    ├── main.dart                  # MyApp, main(), ChatScreen, AppColors, GlassBox
-    ├── home_screen.dart           # HomeScreen + _OvalNavBar
-    ├── login_screen.dart          # LoginScreen (нікнейм + пароль)
-    ├── search_screen.dart         # SearchUserScreen
-    ├── settings_screen.dart       # SettingsScreen — OTA, logout
-    ├── signal_context_menu.dart   # SignalContextMenu overlay
-    ├── audio_player_widget.dart   # AudioMessagePlayer + WaveformPainter
-    ├── voice_recorder.dart        # VoiceRecorder widget
-    └── theme.dart                 # SignalColors, AppSizes, AppTheme
+    ├── main.dart                  # ChatScreen + _messageStatuses cache
+    ├── home_screen.dart           # HomeScreen + AccountTab (Telegram-style) + _OvalNavBar
+    ├── login_screen.dart          # LoginScreen (TabBar: Увійти / Зареєструватись)
+    ├── search_screen.dart
+    ├── settings_screen.dart       # БЕЗ секції профілю (перенесено в AccountTab)
+    ├── signal_context_menu.dart
+    ├── audio_player_widget.dart
+    ├── voice_recorder.dart
+    └── theme.dart
 
 server/
-└── index.js                      # Express + Socket.IO + Firebase Admin (v2.1.2)
+└── index.js                      # Express + Socket.IO + Firebase Admin (v2.6.8)
 ```
 
 ---
@@ -60,59 +60,66 @@ server/
 ## ⚙️ ВАЖЛИВІ КОНСТАНТИ ТА ПРАВИЛА
 
 ```dart
-// config/app_config.dart
-class AppConfig {
-  static String get serverUrl =>
-    dotenv.env['SERVER_URL'] ?? 'https://pproject-y.onrender.com';
-  static bool firebaseAvailable = false;
-}
+// auth_service.dart — ОНОВЛЕНО (v2.6.0)
+// AuthService.login(username, password, displayName?)  → Map токени + юзер
+// AuthService.saveUser(username, displayName, avatarUrl?) → зберігає локально
+// AuthService.getSavedDisplayName() → String?
+// AuthService.getSavedUsername()    → String?
+// AuthService.getSavedAvatarUrl()   → String?
+// AuthService.getToken()            → String?
+// AuthService.logout()              → очищає всі збережені дані
 
-// services/auth_service.dart — НОВИЙ ФАЙЛ (Фаза 1)
-// AuthService.login(username, password, avatarUrl?)  → Map токени + юзер
-// AuthService.getToken()       → String? (JWT access token)
-// AuthService.getRefreshToken() → String?
-// AuthService.refreshToken()   → String? (оновлює access token)
-// AuthService.logout()         → очищає всі збережені дані
-// AuthService.isLoggedIn()     → bool
-// AuthService.getSavedUsername() → String?
+// home_screen.dart — AccountTab (v2.6.0)
+// Акаунт-таб Telegram-стиль:
+//   - Аватар з camera badge (редагування)
+//   - DisplayName + @username + онлайн-статус (клікабельний)
+//   - 3 кнопки: Фото / Редагувати / Налаштування
+//   - Інфо-картка: phone, @username (copy), birthday + visibility
+//   - Кнопка Вийти
+//   - Всі зміни → _pushProfileToServer() → POST /update_profile
 
-// services/socket_service.dart — ОНОВЛЕНО (Фаза 1)
-// init() тепер ВИМАГАЄ токен:
-// _socketSvc.init(token: token ?? '');
-// Виклик у main.dart initSocket():
-//   final token = await AuthService.getToken();
-//   _socketSvc.init(token: token ?? '');
+// login_screen.dart — Split (v2.6.0)
+// TabBar з двома вкладками:
+//   "Увійти" → username + password
+//   "Зареєструватись" → username + displayName (optional) + password + confirm
+// При запуску: якщо є збережений phone → GET /accounts_by_phone
+//   → suggestedAccounts → _AccountPickerSheet (bottomSheet)
 
-// date_utils.dart — клас називається ChatDateUtils (НЕ DateUtils!)
-// Конфлікт з Flutter material.dart!
-// Імпорт: import 'utils/date_utils.dart' as AppDate;
-// Виклик: AppDate.ChatDateUtils.formatTime(ts)
+// message_bubble.dart — Статуси (v2.6.3)
+// status: String? ("sent" | "delivered" | "read") — замінює isRead: bool
+// _StatusIcon → _SignalStatus → _StatusPainter (CustomPainter):
+//   sent      = 1 кружок, сірий контур + синя заливка (#2B5CE6) + сіра галочка
+//   delivered = 2 кружки, сірий контур + синя заливка + сірі галочки (обидва)
+//   read      = 2 кружки, синій контур (#2B5CE6) + сіра заливка + сині галочки
+
+// main.dart — _messageStatuses (v2.6.5)
+// Map<String, String> _messageStatuses — локальний кеш статусів
+// Оновлюється через socket 'message_status_update' для ОБОХ режимів
+// Перекриває статус з Firestore/localMessages для миттєвого відображення
+// Заповнюється при load_history і receive_message
+// mark_read емітується при onConnect І при receive_message від іншого
 ```
 
 ```javascript
-// server/index.js v2.4.3 — ключові налаштування
-const JWT_SECRET = process.env.JWT_SECRET || "change_me_in_production_please";
+// server/index.js v2.6.8 — нові ендпоінти та Socket події
 
-// ОБОВ'ЯЗКОВО встановити JWT_SECRET у Render → Environment Variables!
+// POST /update_profile (verifyJWT) — оновлення профілю
+// Поля: displayName, avatarUrl, phone, birthday, birthdayVisible, onlineVisible
 
-app.set('trust proxy', 1); // Render використовує proxy — без цього rate-limit не працює
+// GET /accounts_by_phone?phone=... (без auth) — акаунти по телефону
+// Повертає до 5 акаунтів: { username, displayName, avatarUrl }
 
-const io = new Server(server, {
-  cors: { origin: "*" },
-  maxHttpBufferSize: 1e7,
-  pingTimeout: 60000,
-  pingInterval: 25000,
-});
+// Socket: send_message → status: 'sent' → миттєва перевірка delivered
+//   Перевіряє всі io.sockets.sockets (не тільки кімнату!)
+//   Якщо отримувач онлайн (будь-який сокет) → одразу delivered
 
-// Socket.IO auth middleware — відхиляє підключення без токена
-io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
-  jwt.verify(token, JWT_SECRET); // кидає помилку якщо невалідний
-  socket.username = decoded.username; // username береться з JWT, не від клієнта!
-});
+// Socket: join_chat → batch update sent→delivered для чужих повідомлень
+//   Одиночні запити (не compound) → фільтр в JS
 
-// sender у send_message — береться з socket.username (JWT), не з data.sender!
-// Це захищає від підробки імені відправника.
+// Socket: mark_read → batch update sent|delivered→read для чужих повідомлень
+//   Два окремих запити (sent і delivered) → фільтр в JS → emit message_status_update
+
+// Socket emit: 'message_status_update' → { messageId, status }
 ```
 
 ---
@@ -120,36 +127,20 @@ io.use((socket, next) => {
 ## 🔐 АВТОРИЗАЦІЯ (Фаза 1 — виконано)
 
 ```
-POST /auth  { username, password, avatarUrl? }
+POST /auth  { username, password, displayName?, avatarUrl? }
   → { status: "created"|"found", token, refreshToken, user }
 
 POST /refresh  { refreshToken }
-  → { token }  (новий access token)
+  → { token }
 
 JWT: access token — 7 днів, refresh token — 30 днів
 bcrypt rounds: 12
 
-Захищені ендпоінти (verifyJWT middleware):
-  POST /upload
-  POST /upload-audio
+Захищені ендпоінти (verifyJWT):
+  POST /upload, POST /upload-audio
   GET  /search_users
-  POST /get_or_create_dm
-  GET  /get_user_chats
-
-Flutter — передача токена:
-  HTTP:   headers: {'Authorization': 'Bearer $token'}
-  Socket: IO.OptionBuilder().setAuth({'token': token})
-```
-
----
-
-## ⏱️ RATE LIMITING (Фаза 1 — виконано)
-
-```
-POST /auth        → 10 req / 15 хвилин
-POST /upload      → 30 req / хвилину
-POST /upload-audio → 30 req / хвилину
-GET  /search_users → 60 req / хвилину
+  POST /get_or_create_dm, GET /get_user_chats
+  POST /update_profile ✅ NEW v2.6.0
 ```
 
 ---
@@ -171,7 +162,6 @@ SignalColors.online         // зелений
 AppSizes.navBarHeight       // 72
 AppSizes.bubbleRadius       // 18
 AppSizes.avatarRadiusMedium // 27
-AppSizes.avatarRadiusLarge  // 36
 ```
 
 ---
@@ -180,50 +170,56 @@ AppSizes.avatarRadiusLarge  // 36
 
 ```
 users/{username}
-  username, avatarUrl, createdAt, passwordHash ✅ (Фаза 1)
-  [ПЛАН Ф2] bio, online, lastSeen
+  username, displayName ✅ NEW v2.6.0
+  avatarUrl, passwordHash, createdAt
+  phone, birthday, birthdayVisible, onlineVisible ✅ NEW v2.6.0
+  [ПЛАН Ф2] online, lastSeen
 
 chats/{chatId}
   type: "dm"
   participants: [username1, username2]
+  participantNames: { username1: displayName1 } ✅ NEW v2.6.0
   lastMessage: { text, sender, timestamp, read }
 
 chats/{chatId}/messages/{messageId}
   text, sender, senderAvatar, type
   timestamp, read, edited, editedAt
+  status: "sent"|"delivered"|"read" ✅ NEW v2.6.3
   replyTo: { id, text, sender }
   reactions: { "❤️": ["user1"] }
-  audioUrl, audioDuration
-  [ПЛАН Ф2] status: "sent"|"delivered"|"read"
+  audioUrl, audioDuration, imageUrl
 
 fcm_tokens/{token}
-  username, updatedAt  ← невалідні видаляються автоматично ✅
+  username, updatedAt
 ```
 
 ---
 
-## 🔌 SOCKET.IO — SocketService методи
+## 🔌 SOCKET.IO — Події
 
-```dart
-// ТІЛЬКИ через SocketService!
-final _socketSvc = SocketService();
+### Клієнт → Сервер
+| Подія | Дані |
+|-------|------|
+| `join_chat` | chatId → auto delivered update |
+| `send_message` | { chatId, text, type, ... } |
+| `mark_read` | { chatId, readerUsername } |
+| `delete_message` | { messageId, chatId } |
+| `edit_message` | { messageId, newText, chatId } |
+| `add_reaction` | { messageId, emoji, chatId } |
+| `typing` | { chatId } |
+| `register_token` | { token } |
+| `request_history` | chatId |
 
-_socketSvc.init(token: token)   // ← ОБОВ'ЯЗКОВО передавати JWT токен
-_socketSvc.connect() / disconnect()
-_socketSvc.joinChat(chatId)
-_socketSvc.leaveChat(chatId)
-_socketSvc.sendMessage(data)    // sender береться з JWT на сервері
-_socketSvc.deleteMessage(msgId, chatId)
-_socketSvc.editMessage(msgId, text, user, chatId)
-_socketSvc.addReaction(msgId, emoji, user, chatId)
-_socketSvc.emitTyping(username, chatId)
-_socketSvc.markRead(chatId, username)
-_socketSvc.registerToken(token, username)
-_socketSvc.requestHistory(chatId)
-_socketSvc.on(event, handler)
-_socketSvc.isConnected
-_socketSvc.dispose()
-```
+### Сервер → Клієнт
+| Подія | Дані |
+|-------|------|
+| `receive_message` | messageData (з status: 'sent') |
+| `message_status_update` | { messageId, status } ✅ NEW |
+| `load_history` | message[] |
+| `message_deleted` | messageId |
+| `message_edited` | { messageId, newText } |
+| `reaction_updated` | { messageId, reactions } |
+| `display_typing` | { username, chatId } |
 
 ---
 
@@ -231,151 +227,85 @@ _socketSvc.dispose()
 
 | Метод | Ендпоінт | Auth | Опис |
 |-------|----------|------|------|
-| POST | `/auth` | ❌ | { username, password, avatarUrl? } → { token, refreshToken, user } |
+| POST | `/auth` | ❌ | { username, password, displayName? } → { token, refreshToken, user } |
 | POST | `/refresh` | ❌ | { refreshToken } → { token } |
-| POST | `/upload` | ✅ JWT | фото → { url } |
-| POST | `/upload-audio` | ✅ JWT | аудіо → { url } |
-| GET | `/search_users?q=&myUsername=` | ✅ JWT | пошук |
-| POST | `/get_or_create_dm` | ✅ JWT | → chat |
-| GET | `/get_user_chats?username=` | ✅ JWT | список чатів (Windows) |
+| POST | `/upload` | ✅ | фото → { url } |
+| POST | `/upload-audio` | ✅ | аудіо → { url } |
+| GET | `/search_users?q=&myUsername=` | ✅ | пошук |
+| POST | `/get_or_create_dm` | ✅ | → chat |
+| GET | `/get_user_chats?username=` | ✅ | список чатів (Windows) |
+| POST | `/update_profile` | ✅ | displayName, phone, birthday... ✅ NEW |
+| GET | `/accounts_by_phone?phone=` | ❌ | акаунти по телефону ✅ NEW |
 | GET | `/ping` | ❌ | health check |
 
 ---
 
-## ✅ ЩО РЕАЛІЗОВАНО (19 функцій)
+## ✅ ЩО РЕАЛІЗОВАНО (v2.6.8)
 
 - [x] Приватні чати (DM) — Firestore + Socket.IO
-- [x] Авторизація — нікнейм + **пароль (bcrypt)** + **JWT** ✅ Фаза 1
-- [x] **Rate limiting + Helmet + Morgan + Joi валідація** ✅ Фаза 1
-- [x] **Socket.IO auth middleware (JWT)** ✅ Фаза 1
+- [x] **displayName vs username** — displayName (будь-яка мова), username (Latin, immutable) ✅ NEW
+- [x] Авторизація — username + password (bcrypt) + JWT
+- [x] **Login/Register розділено** — TabBar з двома вкладками ✅ NEW
+- [x] **AccountTab (Telegram-style)** — аватар, статус, phone, birthday, edit ✅ NEW
+- [x] **Акаунти по телефону** — suggestedAccounts при запуску ✅ NEW
+- [x] **POST /update_profile** — phone, birthday, onlineVisible, displayName ✅ NEW
+- [x] **Статуси повідомлень** ✓/✓✓/✓✓синій — sent/delivered/read ✅ NEW
+- [x] **Signal-style іконки статусів** — CustomPainter з кружечками і галочками ✅ NEW
+- [x] **Real-time статуси** — _messageStatuses cache + mark_read on receive ✅ NEW
+- [x] Rate limiting + Helmet + Morgan + Joi валідація
+- [x] Socket.IO auth middleware (JWT)
 - [x] Надсилання фото (Firebase Storage)
 - [x] Голосові повідомлення + Waveform плеєр
-- [x] Реакції на повідомлення (toggle emoji)
+- [x] Реакції на повідомлення
 - [x] Reply + swipe-to-reply
 - [x] Редагування та видалення повідомлень
 - [x] Signal Dark UI (SignalColors + AppSizes)
 - [x] Плаваюча овальна навігація
-- [x] FCM Push (тільки учасникам ✅)
+- [x] FCM Push (тільки учасникам)
 - [x] Windows підтримка (HTTP fallback)
 - [x] Shorebird OTA
 - [x] Typing indicator
 - [x] Розділювачі дат + Scroll Date Overlay
 - [x] Контекстне меню Signal-стиль
 - [x] Пошук користувачів
-- [x] Завантаження 50 повідомлень
 
 ---
 
-## ✅ ВИКОНАНИЙ РЕФАКТОРИНГ І ФАЗИ
+## 🐛 ВІДОМІ ПРОБЛЕМИ / НАСТУПНІ КРОКИ
 
-| # | Задача | Версія |
-|---|--------|--------|
-| Б1 | Push-фільтр по учасниках | v2.3.5 |
-| Б2 | Дублікат LoginScreen | v2.3.5 |
-| Б3 | maxHttpBufferSize 60MB→10MB | v2.3.5 |
-| Б4 | Graceful shutdown | v2.3.5 |
-| Р1–Р6 | Рефакторинг main.dart, utils, services, config | v2.3.5 |
-| Ф1-1 | bcrypt паролі у /auth | v2.4.3 |
-| Ф1-2 | JWT access + refresh токени | v2.4.3 |
-| Ф1-3 | verifyJWT middleware | v2.4.3 |
-| Ф1-4 | Socket.IO JWT auth | v2.4.3 |
-| Ф1-5 | Rate limiting (auth/upload/search) | v2.4.3 |
-| Ф1-6 | Helmet + Morgan + Joi + trust proxy | v2.4.3 |
-| Ф1-7 | AuthService (Flutter) | v2.4.3 |
-| Ф1-8 | JWT у всіх HTTP запитах | v2.4.3 |
-| Ф1-9 | Кирилиця у нікнеймах | v2.4.3 |
-
----
-
-## 🐛 ВІДОМІ ПРОБЛЕМИ (актуальні)
-
-### 🟡 Дрібні:
-1. **Немає статусів ✓✓** — поле read є але логіка не реалізована
-2. **Немає пагінації** — тільки останні 50 повідомлень
-3. **Немає групових чатів**
+- [ ] Онлайн-статус у AppBar чату ("онлайн" / "був о HH:MM") — **зараз хардкод**
+- [ ] Пагінація повідомлень — тільки останні 50
+- [ ] Групові чати
+- [ ] Шарінг файлів (PDF, DOCX, ZIP)
+- [ ] WebRTC дзвінки
 
 ---
 
 ## ⚠️ ВАЖЛИВІ НЮАНСИ
 
 ```
-1. DateUtils → ChatDateUtils
-   import 'utils/date_utils.dart' as AppDate;
-   AppDate.ChatDateUtils.formatTime(ts)
+1. DateUtils → ChatDateUtils (конфлікт з Flutter material.dart)
+   import 'utils/date_utils.dart';
 
 2. SettingsScreen — НЕ додавати leading: IconButton у AppBar
-   Відкривається як вкладка IndexedStack → Navigator.pop = чорний екран
+   (відкривається як вкладка IndexedStack)
 
-3. serverUrl — НЕ const (getter не може бути const)
-
-4. dotenv.load — ОБОВ'ЯЗКОВО try/catch
-
-5. socket.emit — тільки через _socketSvc.методНазва()
-
-6. SocketService.init() — ОБОВ'ЯЗКОВО передавати token:
+3. SocketService.init() — ОБОВ'ЯЗКОВО передавати token:
    final token = await AuthService.getToken();
    _socketSvc.init(token: token ?? '');
 
-7. HTTP запити до захищених ендпоінтів — ОБОВ'ЯЗКОВО заголовок:
+4. HTTP запити до захищених ендпоінтів:
    headers: {'Authorization': 'Bearer ${token ?? ''}'}
 
-8. JWT_SECRET — встановити у Render → Environment Variables!
-   Не залишати дефолтний "change_me_in_production_please"
+5. sender у Socket повідомленнях береться з JWT (socket.username)
 
-9. sender у Socket повідомленнях береться з JWT (socket.username)
-   НЕ передавати sender від клієнта — ігнорується сервером
-```
+6. message_bubble.dart — НЕ використовувати isRead: bool (застарілий)
+   Використовувати status: String? ("sent"|"delivered"|"read")
 
----
+7. Статуси — Firestore compound query вимагає index!
+   Використовуємо два окремих запити + фільтр в JS
 
-## 📱 ОСОБЛИВОСТІ ПЛАТФОРМ
-
-```dart
-if (!AppConfig.firebaseAvailable) {
-  // Windows: HTTP /get_user_chats + Socket.IO request_history
-  // _localMessages: List<Map> замість StreamBuilder
-} else {
-  // Android/iOS: Firestore StreamBuilder + FCM push + Shorebird OTA
-}
-```
-
----
-
-## 📦 PUBSPEC — КЛЮЧОВІ ЗАЛЕЖНОСТІ
-
-```yaml
-socket_io_client: ^3.1.4
-firebase_core: ^4.4.0
-firebase_messaging: ^16.1.1
-cloud_firestore: ^6.1.2
-firebase_storage: ^12.1.2
-flutter_dotenv: ^5.1.0
-dio: ^5.4.0                  # ← ДОДАНО у Фазі 1
-shorebird_code_push: ^2.0.5
-image_picker: ^1.2.1
-record: ^6.2.0
-audioplayers: ^6.5.1
-vibration: ^3.1.6
-permission_handler: ^12.0.1
-path_provider: ^2.1.1
-shared_preferences: ^2.5.4
-http: ^1.6.0
-```
-
-## SERVER — ЗАЛЕЖНОСТІ (package.json)
-
-```json
-"bcryptjs": "^3.0.3",
-"cors": "^2.8.6",
-"express": "^5.2.1",
-"firebase-admin": "^13.6.1",
-"helmet": "^8.x",
-"joi": "^17.x",
-"jsonwebtoken": "^9.x",
-"morgan": "^1.x",
-"express-rate-limit": "^7.x",
-"multer": "^2.0.2",
-"socket.io": "^4.8.3"
+8. _messageStatuses[msgId] МАЄ пріоритет над msg['status'] з Firestore
 ```
 
 ---
@@ -385,15 +315,17 @@ http: ^1.6.0
 ```
 Новий чат → вставити CONTEXT.md → додати ТІЛЬКИ потрібний файл:
 
-"JWT / авторизація"       → services/auth_service.dart
-"додати JWT на сервері"   → server/index.js
+"профіль / акаунт"        → home_screen.dart
+"логін / реєстрація"      → login_screen.dart
+"статуси повідомлень"     → widgets/message_bubble.dart + main.dart
 "проблема у чаті"         → main.dart
-"проблема навігація"      → home_screen.dart
+"сервер / API"            → server/index.js
+"навігація / HomeScreen"  → home_screen.dart
 "налаштування"            → settings_screen.dart
-"пошук користувачів"      → search_screen.dart
+"авторизація / JWT"       → services/auth_service.dart
+"пошук"                   → search_screen.dart
 "кольори / теми"          → theme.dart
 "аудіо плеєр"             → audio_player_widget.dart
-"сокет проблема"          → services/socket_service.dart
+"сокет"                   → services/socket_service.dart
 "дата/час"                → utils/date_utils.dart
-"конфіг / env"            → config/app_config.dart
 ```
