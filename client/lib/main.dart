@@ -93,17 +93,45 @@ void main() async {
   final savedDisplayName = await AuthService.getSavedDisplayName();
   final savedAvatar = await AuthService.getSavedAvatarUrl();
 
-  runApp(
-    MyApp(
-      initialScreen: savedUsername != null
-          ? HomeScreen(
-              myUsername: savedUsername,
-              myDisplayName: savedDisplayName ?? savedUsername,
-              myAvatarUrl: savedAvatar,
+  Widget initialScreen;
+
+  if (savedUsername != null) {
+    // Вже залогінений — одразу на головний екран
+    initialScreen = HomeScreen(
+      myUsername: savedUsername,
+      myDisplayName: savedDisplayName ?? savedUsername,
+      myAvatarUrl: savedAvatar,
+    );
+  } else {
+    // Не залогінений — перевіряємо чи є збережений телефон
+    // Якщо є → шукаємо прив'язані акаунти на сервері
+    final prefs = await SharedPreferences.getInstance();
+    final savedPhone = prefs.getString('phone');
+    List<Map<String, dynamic>> suggestedAccounts = [];
+
+    if (savedPhone != null && savedPhone.isNotEmpty) {
+      try {
+        final res = await http
+            .get(
+              Uri.parse(
+                '\${AppConfig.serverUrl}/accounts_by_phone?phone=\${Uri.encodeComponent(savedPhone)}',
+              ),
             )
-          : const LoginScreen(),
-    ),
-  );
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          suggestedAccounts = (jsonDecode(res.body) as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+        }
+      } catch (_) {
+        // Немає з'єднання — просто показуємо звичайний логін
+      }
+    }
+
+    initialScreen = LoginScreen(suggestedAccounts: suggestedAccounts);
+  }
+
+  runApp(MyApp(initialScreen: initialScreen));
 }
 
 class MyApp extends StatelessWidget {

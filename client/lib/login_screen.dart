@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'home_screen.dart';
 import 'theme.dart';
 import 'services/auth_service.dart';
@@ -7,7 +9,11 @@ import 'services/auth_service.dart';
 // 🚪 LoginScreen — обгортка з двома вкладками
 // ══════════════════════════════════════════════════════════
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Акаунти знайдені по телефону на попередньому запуску.
+  /// Якщо список не порожній — при відкритті показуємо вибір.
+  final List<Map<String, dynamic>> suggestedAccounts;
+
+  const LoginScreen({super.key, this.suggestedAccounts = const []});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -21,6 +27,12 @@ class _LoginScreenState extends State<LoginScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Якщо є акаунти по телефону — показуємо вибір після build
+    if (widget.suggestedAccounts.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showAccountPicker();
+      });
+    }
   }
 
   @override
@@ -28,6 +40,32 @@ class _LoginScreenState extends State<LoginScreen>
     _tabController.dispose();
     super.dispose();
   }
+
+  // ── Вибір акаунту по телефону ─────────────────────────
+  void _showAccountPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: SignalColors.elevated,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _AccountPickerSheet(
+        accounts: widget.suggestedAccounts,
+        onSelect: (username, displayName) {
+          Navigator.pop(ctx);
+          // Переключаємось на вкладку "Увійти" і заповнюємо логін
+          _tabController.animateTo(0);
+          // Передаємо вибраний username в _LoginTab через навігацію
+          // (найпростіше — показати діалог ще раз через GlobalKey або setState)
+          // Використовуємо PreFilledLoginData щоб передати в дочірній віджет
+          setState(() => _preFilledUsername = username);
+        },
+      ),
+    );
+  }
+
+  String? _preFilledUsername;
 
   @override
   Widget build(BuildContext context) {
@@ -105,6 +143,7 @@ class _LoginScreenState extends State<LoginScreen>
                 children: [
                   _LoginTab(
                     onSwitchToRegister: () => _tabController.animateTo(1),
+                    preFilledUsername: _preFilledUsername,
                   ),
                   _RegisterTab(
                     onSwitchToLogin: () => _tabController.animateTo(0),
@@ -124,7 +163,8 @@ class _LoginScreenState extends State<LoginScreen>
 // ══════════════════════════════════════════════════════════
 class _LoginTab extends StatefulWidget {
   final VoidCallback onSwitchToRegister;
-  const _LoginTab({required this.onSwitchToRegister});
+  final String? preFilledUsername;
+  const _LoginTab({required this.onSwitchToRegister, this.preFilledUsername});
 
   @override
   State<_LoginTab> createState() => _LoginTabState();
@@ -135,6 +175,23 @@ class _LoginTabState extends State<_LoginTab> {
   final _passwordCtrl = TextEditingController();
   bool _isLoading = false;
   bool _obscure = true;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.preFilledUsername != null) {
+      _usernameCtrl.text = widget.preFilledUsername!;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _LoginTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.preFilledUsername != null &&
+        widget.preFilledUsername != oldWidget.preFilledUsername) {
+      _usernameCtrl.text = widget.preFilledUsername!;
+    }
+  }
 
   @override
   void dispose() {
@@ -610,5 +667,180 @@ class _RegisterTabState extends State<_RegisterTab> {
       ),
       onSubmitted: onSubmitted,
     );
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// 📱 AccountPickerSheet — вибір акаунту по телефону
+// ══════════════════════════════════════════════════════════
+class _AccountPickerSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> accounts;
+  final void Function(String username, String displayName) onSelect;
+
+  const _AccountPickerSheet({required this.accounts, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Заголовок
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: SignalColors.primary.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.phone_outlined,
+                  color: SignalColors.primary,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Знайдено акаунти',
+                      style: TextStyle(
+                        color: SignalColors.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Оберіть акаунт для входу',
+                      style: TextStyle(
+                        color: SignalColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Список акаунтів
+          ...accounts.map((acc) {
+            final username = acc['username'] as String? ?? '';
+            final displayName = acc['displayName'] as String? ?? username;
+            final avatarUrl = acc['avatarUrl'] as String?;
+            final colors = _avatarColors(username);
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                onTap: () => onSelect(username, displayName),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: SignalColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: colors[0],
+                        backgroundImage: avatarUrl != null
+                            ? NetworkImage(avatarUrl)
+                            : null,
+                        child: avatarUrl == null
+                            ? Text(
+                                displayName.isNotEmpty
+                                    ? displayName[0].toUpperCase()
+                                    : '?',
+                                style: TextStyle(
+                                  color: colors[1],
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              displayName,
+                              style: const TextStyle(
+                                color: SignalColors.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              '@$username',
+                              style: const TextStyle(
+                                color: SignalColors.textSecondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        color: SignalColors.textSecondary,
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+
+          const SizedBox(height: 8),
+
+          // Кнопка — увійти з іншим акаунтом
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'Увійти з іншим акаунтом',
+                style: TextStyle(
+                  color: SignalColors.textSecondary,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Той самий алгоритм кольорів що і в SignalColors.avatarColorsFor
+  List<Color> _avatarColors(String username) {
+    const palettes = [
+      [Color(0xFF1A73E8), Color(0xFFFFFFFF)],
+      [Color(0xFF0F9D58), Color(0xFFFFFFFF)],
+      [Color(0xFFE53935), Color(0xFFFFFFFF)],
+      [Color(0xFF8E24AA), Color(0xFFFFFFFF)],
+      [Color(0xFFF57C00), Color(0xFFFFFFFF)],
+      [Color(0xFF00838F), Color(0xFFFFFFFF)],
+    ];
+    final idx = username.isEmpty
+        ? 0
+        : username.codeUnits.fold(0, (a, b) => a + b) % palettes.length;
+    return palettes[idx].cast<Color>();
   }
 }
