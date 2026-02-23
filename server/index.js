@@ -550,9 +550,34 @@ io.on('connection', async (socket) => {
     console.log(`📱 CLIENT LOG [${socket.username}]:`, msg);
   });
 
-  socket.on('join_chat', (chatId) => {
+  socket.on('join_chat', async (chatId) => {
     socket.join(chatId);
     console.log(`${socket.username} зайшов у кімнату: ${chatId}`);
+
+    // Позначаємо повідомлення від інших як delivered (якщо були sent)
+    try {
+      const msgsRef = db.collection('chats').doc(chatId).collection('messages');
+      const snap = await msgsRef
+        .where('status', '==', 'sent')
+        .where('sender', '!=', socket.username)
+        .get();
+
+      if (!snap.empty) {
+        const batch = db.batch();
+        snap.docs.forEach(doc => batch.update(doc.ref, { status: 'delivered' }));
+        await batch.commit();
+
+        // Сповіщаємо відправника що повідомлення доставлені
+        snap.docs.forEach(doc => {
+          io.to(chatId).emit('message_status_update', {
+            messageId: doc.id,
+            status: 'delivered',
+          });
+        });
+      }
+    } catch (err) {
+      console.error('Delivered update error:', err);
+    }
   });
 
   socket.on('leave_chat', (chatId) => {
@@ -615,7 +640,8 @@ io.on('connection', async (socket) => {
       audioUrl: data.audioUrl || null,
       audioDuration: data.audioDuration || null,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      read: false
+      read: false,
+      status: 'sent',  // sent → delivered → read
     };
 
     const docRef = await db.collection('chats').doc(chatId)
@@ -691,8 +717,35 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('mark_read', async (data) => {
-    if (data.chatId) {
-      io.to(data.chatId).emit('message_read_update', data);
+    const { chatId, readerUsername } = data;
+    if (!chatId || !readerUsername) return;
+
+    try {
+      const msgsRef = db.collection('chats').doc(chatId).collection('messages');
+      // Всі повідомлення від інших (sent або delivered) → read
+      const snap = await msgsRef
+        .where('sender', '!=', readerUsername)
+        .where('status', 'in', ['sent', 'delivered'])
+        .get();
+
+      if (!snap.empty) {
+        const batch = db.batch();
+        snap.docs.forEach(doc => batch.update(doc.ref, { status: 'read', read: true }));
+        await batch.commit();
+
+        // Сповіщаємо всіх у кімнаті (відправник побачить сині галочки)
+        snap.docs.forEach(doc => {
+          io.to(chatId).emit('message_status_update', {
+            messageId: doc.id,
+            status: 'read',
+          });
+        });
+      }
+
+      // Оновлюємо lastMessage.read у чаті
+      await db.collection('chats').doc(chatId).update({ 'lastMessage.read': true });
+    } catch (err) {
+      console.error('mark_read error:', err);
     }
   });
 
