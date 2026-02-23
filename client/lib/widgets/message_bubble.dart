@@ -329,41 +329,54 @@ class _StatusPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final color = filled ? _blue : _grey;
     final r = size.height / 2;
 
-    // Кружок — завжди тільки контур (stroke), без заливки
-    final circlePaint = Paint()
-      ..color = color
+    // filled = read: синій контур + сіра заливка + синя галочка
+    // !filled = sent/delivered: сірий контур, без заливки, сіра галочка
+    final strokeColor = filled ? _blue : _grey;
+    final strokeWidth = filled ? 1.6 : 1.3;
+
+    final fillPaint = filled
+        ? (Paint()
+            ..color =
+                const Color(0x99B0B8C8) // сіра заливка для read
+            ..style = PaintingStyle.fill)
+        : null;
+
+    final strokePaint = Paint()
+      ..color = strokeColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = filled ? 1.6 : 1.3;
+      ..strokeWidth = strokeWidth;
 
     final checkPaint = Paint()
-      ..color = color
+      ..color = strokeColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = filled ? 1.6 : 1.3
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
+    void drawCircle(Offset center, {double opacityMult = 1.0}) {
+      if (fillPaint != null) {
+        canvas.drawCircle(center, r - 0.8, fillPaint);
+      }
+      final sp = opacityMult == 1.0
+          ? strokePaint
+          : (Paint()
+              ..color = strokeColor.withOpacity(opacityMult)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = strokeWidth);
+      canvas.drawCircle(center, r - 0.8, sp);
+    }
+
     if (circles == 1) {
       final center = Offset(r, r);
-      canvas.drawCircle(center, r - 0.8, circlePaint);
+      drawCircle(center);
       _drawCheck(canvas, checkPaint, center, r * 0.52);
     } else {
       final leftCenter = Offset(r, r);
       final rightCenter = Offset(r * 2.15, r);
-
-      // Лівий — трохи прозоріший для ефекту глибини
-      final leftPaint = Paint()
-        ..color = color.withOpacity(filled ? 0.65 : 0.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = filled ? 1.6 : 1.3;
-      canvas.drawCircle(leftCenter, r - 0.8, leftPaint);
-
-      // Правий поверх лівого
-      canvas.drawCircle(rightCenter, r - 0.8, circlePaint);
-
-      // Галочка тільки в правому
+      drawCircle(leftCenter, opacityMult: 0.6);
+      drawCircle(rightCenter);
       _drawCheck(canvas, checkPaint, rightCenter, r * 0.52);
     }
   }
