@@ -336,12 +336,11 @@ class _StatusPainter extends CustomPainter {
     final strokeColor = filled ? _blue : _grey;
     final strokeWidth = filled ? 1.6 : 1.3;
 
-    final fillPaint = filled
-        ? (Paint()
-            ..color =
-                const Color(0x99B0B8C8) // сіра заливка для read
-            ..style = PaintingStyle.fill)
-        : null;
+    final fillPaint = Paint()
+      ..color = filled
+          ? const Color(0x99B0B8C8) // сіра заливка для read
+          : const Color(0xFF2B5CE6) // синя заливка для delivered
+      ..style = PaintingStyle.fill;
 
     final strokePaint = Paint()
       ..color = strokeColor
@@ -356,9 +355,8 @@ class _StatusPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
 
     void drawCircle(Offset center, {double opacityMult = 1.0}) {
-      if (fillPaint != null) {
-        canvas.drawCircle(center, r - 0.8, fillPaint);
-      }
+      canvas.drawCircle(center, r - 0.8, fillPaint);
+
       final sp = opacityMult == 1.0
           ? strokePaint
           : (Paint()
@@ -377,6 +375,7 @@ class _StatusPainter extends CustomPainter {
       final rightCenter = Offset(r * 2.15, r);
       drawCircle(leftCenter, opacityMult: 0.6);
       drawCircle(rightCenter);
+      _drawCheck(canvas, checkPaint, leftCenter, r * 0.52);
       _drawCheck(canvas, checkPaint, rightCenter, r * 0.52);
     }
   }

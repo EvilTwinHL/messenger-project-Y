@@ -340,6 +340,16 @@ class _ChatScreenState extends State<ChatScreen> {
         _messageStatuses[newId] = newStatus ?? 'sent';
       }
 
+      // Якщо повідомлення від іншого — одразу mark_read
+      // (чат відкритий, значить ми його вже "прочитали")
+      final msgSender = msg['sender'] as String?;
+      if (msgSender != null && msgSender != myName) {
+        _socketSvc.socket.emit('mark_read', {
+          'chatId': widget.chatId,
+          'readerUsername': myName,
+        });
+      }
+
       if (!AppConfig.firebaseAvailable) {
         // Windows: додаємо повідомлення в локальний список
         setState(() => _localMessages.insert(0, msg));
