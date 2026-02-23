@@ -662,6 +662,26 @@ io.on('connection', async (socket) => {
     const savedMessage = { id: docRef.id, ...messageData, timestamp: new Date().toISOString() };
     io.to(chatId).emit('receive_message', savedMessage);
 
+    // Одразу перевіряємо чи отримувач вже в кімнаті (онлайн в чаті)
+    // Якщо так — одразу delivered, без очікування join_chat
+    try {
+      const room = io.sockets.adapter.rooms.get(chatId);
+      const socketsInRoom = room ? [...room] : [];
+      const recipientOnline = socketsInRoom.some(sid => {
+        const s = io.sockets.sockets.get(sid);
+        return s && s.username !== sender;
+      });
+      if (recipientOnline) {
+        await docRef.update({ status: 'delivered' });
+        io.to(chatId).emit('message_status_update', {
+          messageId: docRef.id,
+          status: 'delivered',
+        });
+      }
+    } catch (err) {
+      console.error('[send_message delivered check] Error:', err);
+    }
+
     // FCM Push — використовуємо displayName у заголовку якщо є
     try {
       const chatDoc = await db.collection("chats").doc(chatId).get();
