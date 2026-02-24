@@ -446,7 +446,7 @@ class _FileBubble extends StatelessWidget {
           iconData: _iconFor(fileName),
           formatSize: _formatSize,
           onOpen: () => _openFile(),
-          onSave: () => _saveFile(ctx),
+          onSave: () => _saveFile(context),
         ),
       ),
     );
@@ -500,14 +500,10 @@ class _FileBubble extends StatelessWidget {
     try {
       Directory? saveDir;
       if (Platform.isAndroid) {
-        final androidInfo = await DeviceInfoPlugin().androidInfo;
-        if (androidInfo.version.sdkInt >= 29) {
-          saveDir = await getExternalStorageDirectory();
-        } else {
-          saveDir = Directory('/storage/emulated/0/Download');
-          if (!await saveDir.exists()) {
-            saveDir = await getExternalStorageDirectory();
-          }
+        // Завжди зберігаємо в публічну папку Download
+        saveDir = Directory('/storage/emulated/0/Download');
+        if (!await saveDir.exists()) {
+          await saveDir.create(recursive: true);
         }
       } else {
         saveDir = await getApplicationDocumentsDirectory();
