@@ -626,6 +626,26 @@ io.on('connection', async (socket) => {
     }
   });
 
+  socket.on('request_history_more', async ({ chatId, before }) => {
+    if (!chatId || !before) return;
+    try {
+      const beforeTs = new Date(before);
+      const snapshot = await db.collection('chats').doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', 'desc')
+        .startAfter(beforeTs)
+        .limit(50)
+        .get();
+
+      const history = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .reverse();
+      socket.emit('load_history_more', history);
+    } catch (err) {
+      console.error('[request_history_more] Error:', err);
+    }
+  });
+
   socket.on('send_message', async (data) => {
     const { chatId, text, type } = data;
     const sender = socket.username; // з JWT!
@@ -789,7 +809,7 @@ io.on('connection', async (socket) => {
         'lastMessage.read': true,
         [`unreadCounts.${readerUsername}`]: 0,
       });
-      
+
     } catch (err) {
       console.error('[mark_read] Error:', err);
     }
