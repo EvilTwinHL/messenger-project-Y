@@ -1045,12 +1045,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   {};
               final otherDisplay = names[otherUsername] ?? otherUsername;
               final lm = chat['lastMessage'] ?? {};
+              final unreadCounts =
+                  (chat['unreadCounts'] as Map?)?.cast<String, dynamic>() ?? {};
+              final unread = (unreadCounts[widget.myUsername] ?? 0) as int;
               return _chatTile(
                 chatId,
                 otherUsername,
                 otherDisplay,
                 (lm['text'] ?? '') as String,
                 lm['timestamp'],
+                unreadCount: unread,
               );
             } catch (_) {
               return const SizedBox.shrink();
@@ -1107,8 +1111,9 @@ class _HomeScreenState extends State<HomeScreen> {
     String otherUsername,
     String otherDisplay,
     String lastText,
-    dynamic lastTs,
-  ) {
+    dynamic lastTs, {
+    int unreadCount = 0,
+  }) {
     final colors = SignalColors.avatarColorsFor(otherUsername);
     return Material(
       color: Colors.transparent,
@@ -1184,6 +1189,27 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
+
+              if (unreadCount > 0)
+                Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: SignalColors.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    unreadCount > 99 ? '99+' : '$unreadCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
