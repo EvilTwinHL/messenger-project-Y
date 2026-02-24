@@ -1138,17 +1138,44 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             children: [
-              CircleAvatar(
-                radius: AppSizes.avatarRadiusMedium,
-                backgroundColor: colors[0],
-                child: Text(
-                  otherDisplay.isNotEmpty ? otherDisplay[0].toUpperCase() : '?',
-                  style: TextStyle(
-                    color: colors[1],
-                    fontWeight: FontWeight.bold,
-                    fontSize: AppSizes.avatarRadiusMedium * 0.66,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: AppSizes.avatarRadiusMedium,
+                    backgroundColor: colors[0],
+                    child: Text(
+                      otherDisplay.isNotEmpty
+                          ? otherDisplay[0].toUpperCase()
+                          : '?',
+                      style: TextStyle(
+                        color: colors[1],
+                        fontWeight: FontWeight.bold,
+                        fontSize: AppSizes.avatarRadiusMedium * 0.66,
+                      ),
+                    ),
                   ),
-                ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          unreadCount > 99 ? '99+' : '$unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(width: 14),
               Expanded(
