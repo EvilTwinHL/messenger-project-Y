@@ -5,6 +5,7 @@ import '../main.dart' show AppColors;
 import '../audio_player_widget.dart';
 import 'reply_preview.dart';
 import 'reaction_widgets.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // Кількість рядків після яких показується "Читати далі"
 const int _kCollapsedLines = 8;
@@ -31,6 +32,9 @@ class MessageBubble extends StatefulWidget {
   final String currentUsername;
   final Function(String messageId, String emoji)? onReactionTap;
   final bool edited;
+  final String? fileUrl;
+  final String? fileName;
+  final int? fileSize;
 
   const MessageBubble({
     super.key,
@@ -49,6 +53,9 @@ class MessageBubble extends StatefulWidget {
     required this.currentUsername,
     this.onReactionTap,
     this.edited = false,
+    this.fileUrl,
+    this.fileName,
+    this.fileSize,
   });
 
   @override
@@ -140,6 +147,15 @@ class _MessageBubbleState extends State<MessageBubble> {
                           fit: BoxFit.cover,
                         ),
                       ),
+                    ),
+
+                  // Файл
+                  if (widget.fileUrl != null)
+                    _FileBubble(
+                      fileUrl: widget.fileUrl!,
+                      fileName: widget.fileName ?? 'Файл',
+                      fileSize: widget.fileSize,
+                      isMe: widget.isMe,
                     ),
 
                   // Аудіо
@@ -391,4 +407,107 @@ class _StatusPainter extends CustomPainter {
   @override
   bool shouldRepaint(_StatusPainter old) =>
       old.circles != circles || old.filled != filled;
+}
+
+// ══════════════════════════════════════════════════════════
+// 📎 FileBubble — відображення файлу в бульбашці
+// ══════════════════════════════════════════════════════════
+class _FileBubble extends StatelessWidget {
+  final String fileUrl;
+  final String fileName;
+  final int? fileSize;
+  final bool isMe;
+
+  const _FileBubble({
+    required this.fileUrl,
+    required this.fileName,
+    this.fileSize,
+    required this.isMe,
+  });
+
+  IconData _iconFor(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'pdf':
+        return Icons.picture_as_pdf;
+      case 'doc':
+      case 'docx':
+        return Icons.description;
+      case 'zip':
+      case 'rar':
+        return Icons.folder_zip;
+      default:
+        return Icons.insert_drive_file;
+    }
+  }
+
+  String _formatSize(int? bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return '${bytes}B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        // Відкриваємо через браузер / системний переглядач
+        final uri = Uri.parse(fileUrl);
+        // ignore: deprecated_member_use
+        if (await canLaunchUrl(uri))
+          launchUrl(uri, mode: LaunchMode.externalApplication);
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _iconFor(fileName),
+              color: isMe ? Colors.white70 : SignalColors.primary,
+              size: 28,
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    fileName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (fileSize != null)
+                    Text(
+                      _formatSize(fileSize),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.download_rounded,
+              color: Colors.white.withOpacity(0.6),
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

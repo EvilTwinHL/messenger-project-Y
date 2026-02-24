@@ -33,6 +33,8 @@ import 'utils/date_utils.dart' as AppDate;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/app_config.dart';
 import 'services/auth_service.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:convert';
 
 // Глобальний флаг доступності Firebase (false на Windows без firebase_options.dart)
 //bool firebaseAvailable = false;
@@ -551,6 +553,100 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showAttachMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: SignalColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _attachOption(Icons.image, 'Фото', _pickAndUploadImage),
+              _attachOption(Icons.picture_as_pdf, 'PDF', _pickAndUploadFile),
+              _attachOption(Icons.description, 'Документ', _pickAndUploadFile),
+              _attachOption(Icons.folder_zip, 'ZIP', _pickAndUploadFile),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _attachOption(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: SignalColors.elevated,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: SignalColors.primary, size: 26),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: SignalColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx', 'zip', 'txt'],
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    if (file.path == null) return;
+
+    final token = await AuthService.getToken();
+    final uri = Uri.parse('${AppConfig.serverUrl}/upload-file');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer ${token ?? ''}'
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          file.path!,
+          filename: file.name,
+        ),
+      );
+
+    final response = await request.send();
+    if (response.statusCode != 200) return;
+
+    final body = jsonDecode(await response.stream.bytesToString());
+    final fileUrl = body['url'] as String;
+    final fileName = body['fileName'] as String;
+    final fileSize = body['fileSize'] as int;
+
+    _socketSvc.socket.emit('send_message', {
+      'chatId': widget.chatId,
+      'text': '',
+      'type': 'file',
+      'fileUrl': fileUrl,
+      'fileName': fileName,
+      'fileSize': fileSize,
+    });
+  }
+
   void _setReplyTo(Map message) {
     setState(() {
       _replyToMessageId = message['id'];
@@ -879,6 +975,9 @@ class _ChatScreenState extends State<ChatScreen> {
         currentUsername: myName,
         onReactionTap: _addReaction,
         edited: message['edited'] == true,
+        fileUrl: message['fileUrl'] as String?, // ✅
+        fileName: message['fileName'] as String?, // ✅
+        fileSize: message['fileSize'] as int?, // ✅
       );
 
       SignalContextMenu.show(
@@ -1836,7 +1935,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : _buildCircleButton(
               key: const ValueKey('attach'),
               icon: Icons.attach_file,
-              onPressed: _pickAndUploadImage,
+              onPressed: _showAttachMenu,
               color: SignalColors.primary,
             ),
     );
