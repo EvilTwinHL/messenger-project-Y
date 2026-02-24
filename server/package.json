@@ -1,6 +1,6 @@
 {
   "name": "messenger-y-server",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "description": "server Messenger Y",
   "main": "index.js",
   "scripts": {

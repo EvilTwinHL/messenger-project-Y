@@ -724,6 +724,9 @@ io.on('connection', async (socket) => {
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       read: false,
       status: 'sent',  // sent → delivered → read
+      fileUrl: data.fileUrl || null,
+      fileName: data.fileName || null,
+      fileSize: data.fileSize || null,
     };
 
     const docRef = await db.collection('chats').doc(chatId)
