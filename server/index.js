@@ -324,8 +324,9 @@ const ALLOWED_FILE_TYPES = [
 ];
 
 app.post('/upload-file', verifyJWT, uploadLimiter, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).send('No file');
-  if (!ALLOWED_FILE_TYPES.includes(req.file.mimetype)) {
+  const ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'zip', 'txt'];
+  const fileExt = req.file.originalname.split('.').pop().toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(fileExt)) {
     fs.unlinkSync(req.file.path);
     return res.status(400).json({ error: 'Тип файлу не підтримується' });
   }
@@ -674,7 +675,20 @@ io.on('connection', async (socket) => {
   socket.on('request_history_more', async ({ chatId, before }) => {
     if (!chatId || !before) return;
     try {
-      const beforeTs = new Date(before);
+      let beforeTs;
+      if (typeof before === 'string') {
+        beforeTs = new Date(before);
+      } else if (before?._seconds) {
+        beforeTs = new Date(before._seconds * 1000);
+      } else {
+        beforeTs = new Date(before);
+      }
+
+      if (isNaN(beforeTs.getTime())) {
+        console.error('[request_history_more] Invalid timestamp:', before);
+        return;
+      }
+
       const snapshot = await db.collection('chats').doc(chatId)
         .collection('messages')
         .orderBy('timestamp', 'desc')
