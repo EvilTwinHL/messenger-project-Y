@@ -312,6 +312,51 @@ app.post('/upload-audio', verifyJWT, uploadLimiter, upload.single('audio'), asyn
 });
 
 // ==========================================
+// 📎 ЗАВАНТАЖЕННЯ ФАЙЛІВ (PDF, DOCX, ZIP)
+// ==========================================
+const ALLOWED_FILE_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/zip',
+  'application/x-zip-compressed',
+  'text/plain',
+];
+
+app.post('/upload-file', verifyJWT, uploadLimiter, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).send('No file');
+  if (!ALLOWED_FILE_TYPES.includes(req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'Тип файлу не підтримується' });
+  }
+  // Ліміт 20MB
+  if (req.file.size > 20 * 1024 * 1024) {
+    fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'Файл занадто великий (макс. 20MB)' });
+  }
+
+  try {
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const remoteFileName = `files/${Date.now()}_${safeName}`;
+
+    await bucket.upload(req.file.path, {
+      destination: remoteFileName,
+      metadata: { contentType: req.file.mimetype }
+    });
+
+    const file = bucket.file(remoteFileName);
+    const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
+
+    fs.unlinkSync(req.file.path);
+    res.json({ url, fileName: req.file.originalname, fileSize: req.file.size });
+
+  } catch (err) {
+    console.error('[upload-file] Error:', err);
+    res.status(500).send('File upload failed');
+  }
+});
+
+// ==========================================
 // 🔍 4. ПОШУК КОРИСТУВАЧІВ (захищено)
 // Повертає username + displayName + avatarUrl
 // Пошук іде по username (логіну) — незмінному полю
