@@ -1,4 +1,4 @@
-# 🗂 MESSENGER Y — PROJECT CONTEXT v2.6.8
+# 🗂 MESSENGER Y — PROJECT CONTEXT v2.9.7
 > Вставляй цей файл першим повідомленням у новому чаті.
 > Після цього додавай ТІЛЬКИ той файл, з яким зараз працюєш.
 
@@ -20,7 +20,7 @@
 
 ---
 
-## 🗂 СТРУКТУРА ФАЙЛІВ (актуальна v2.6.8)
+## 🗂 СТРУКТУРА ФАЙЛІВ (актуальна v2.9.7)
 
 ```
 client/
@@ -35,14 +35,14 @@ client/
     ├── utils/
     │   └── date_utils.dart        # ChatDateUtils
     ├── widgets/
-    │   ├── message_bubble.dart    # status: "sent"|"delivered"|"read" + Signal-style іконки
+    │   ├── message_bubble.dart    # status + Signal-style іконки + FileBubble ✅ v2.9.7
     │   ├── swipe_to_reply.dart
     │   ├── typing_indicator.dart
     │   ├── date_separator.dart
     │   ├── reply_preview.dart
     │   └── reaction_widgets.dart
-    ├── main.dart                  # ChatScreen + _messageStatuses cache
-    ├── home_screen.dart           # HomeScreen + AccountTab (Telegram-style) + _OvalNavBar
+    ├── main.dart                  # ChatScreen + _messageStatuses + пагінація ✅ v2.9.7
+    ├── home_screen.dart           # HomeScreen + AccountTab + unreadCounts Badge ✅ v2.9.7
     ├── login_screen.dart          # LoginScreen (TabBar: Увійти / Зареєструватись)
     ├── search_screen.dart
     ├── settings_screen.dart       # БЕЗ секції профілю (перенесено в AccountTab)
@@ -52,7 +52,7 @@ client/
     └── theme.dart
 
 server/
-└── index.js                      # Express + Socket.IO + Firebase Admin (v2.6.8)
+└── index.js                      # Express + Socket.IO + Firebase Admin (v2.9.7)
 ```
 
 ---
@@ -69,6 +69,12 @@ server/
 // AuthService.getToken()            → String?
 // AuthService.logout()              → очищає всі збережені дані
 
+// home_screen.dart — unreadCounts Badge (v2.9.7)
+// _chatTile() має параметр unreadCount: int
+// Badge — червоне коло на CircleAvatar (Stack + Positioned top:-2, right:-2)
+// Дані: chat['unreadCounts'][myUsername] з Firestore StreamBuilder
+// Сервер: increment при send_message, reset=0 при mark_read
+
 // home_screen.dart — AccountTab (v2.6.0)
 // Акаунт-таб Telegram-стиль:
 //   - Аватар з camera badge (редагування)
@@ -78,48 +84,53 @@ server/
 //   - Кнопка Вийти
 //   - Всі зміни → _pushProfileToServer() → POST /update_profile
 
-// login_screen.dart — Split (v2.6.0)
-// TabBar з двома вкладками:
-//   "Увійти" → username + password
-//   "Зареєструватись" → username + displayName (optional) + password + confirm
-// При запуску: якщо є збережений phone → GET /accounts_by_phone
-//   → suggestedAccounts → _AccountPickerSheet (bottomSheet)
-
-// message_bubble.dart — Статуси (v2.6.3)
-// status: String? ("sent" | "delivered" | "read") — замінює isRead: bool
-// _StatusIcon → _SignalStatus → _StatusPainter (CustomPainter):
-//   sent      = 1 кружок, сірий контур + синя заливка (#2B5CE6) + сіра галочка
-//   delivered = 2 кружки, сірий контур + синя заливка + сірі галочки (обидва)
-//   read      = 2 кружки, синій контур (#2B5CE6) + сіра заливка + сині галочки
+// main.dart — пагінація (v2.9.7)
+// _olderMessages: List — старіші повідомлення (Firebase: startAfterDocument)
+// _lastDocument: DocumentSnapshot? — курсор для наступної сторінки
+// _isLoadingMore: bool — індикатор завантаження
+// _hasMoreMessages: bool — чи є ще повідомлення
+// scroll listener → _loadMoreMessages() при maxScrollExtent - 300
+// combined = [...messages, ..._olderMessages]
+// Windows: request_history_more → load_history_more
 
 // main.dart — _messageStatuses (v2.6.5)
 // Map<String, String> _messageStatuses — локальний кеш статусів
 // Оновлюється через socket 'message_status_update' для ОБОХ режимів
 // Перекриває статус з Firestore/localMessages для миттєвого відображення
-// Заповнюється при load_history і receive_message
-// mark_read емітується при onConnect І при receive_message від іншого
+
+// message_bubble.dart — FileBubble (v2.9.7)
+// fileUrl, fileName, fileSize — нові поля MessageBubble
+// _FileBubble → GestureDetector → _showFileOptions → _FileMenuOverlay
+// _FileMenuOverlay — Signal-style overlay (як контекстне меню)
+//   - "Відкрити" → Dio.download до tmpDir → OpenFilex.open
+//   - "Зберегти" → Dio.download до /storage/emulated/0/Download
+// permission_handler + device_info_plus для дозволів Android
+
+// message_bubble.dart — Статуси (v2.6.3)
+// status: String? ("sent" | "delivered" | "read") — замінює isRead: bool
 ```
 
 ```javascript
-// server/index.js v2.6.8 — нові ендпоінти та Socket події
+// server/index.js v2.9.7
 
-// POST /update_profile (verifyJWT) — оновлення профілю
-// Поля: displayName, avatarUrl, phone, birthday, birthdayVisible, onlineVisible
+// POST /upload-file (verifyJWT) — завантаження файлів ✅ NEW v2.9.7
+// Дозволені розширення: pdf, doc, docx, zip, txt (перевірка по extension)
+// Ліміт: 20MB
+// Повертає: { url, fileName (utf8 decoded), fileSize }
+// Зберігає у Firebase Storage: files/{timestamp}_{safeName}
 
-// GET /accounts_by_phone?phone=... (без auth) — акаунти по телефону
-// Повертає до 5 акаунтів: { username, displayName, avatarUrl }
+// Socket: send_message — тепер зберігає fileUrl, fileName, fileSize ✅ NEW v2.9.7
 
-// Socket: send_message → status: 'sent' → миттєва перевірка delivered
-//   Перевіряє всі io.sockets.sockets (не тільки кімнату!)
-//   Якщо отримувач онлайн (будь-який сокет) → одразу delivered
+// Socket: send_message — unreadCounts ✅ NEW v2.9.7
+// Після збереження повідомлення:
+//   FieldValue.increment(1) для кожного отримувача у chats/{chatId}.unreadCounts.{username}
 
-// Socket: join_chat → batch update sent→delivered для чужих повідомлень
-//   Одиночні запити (не compound) → фільтр в JS
+// Socket: mark_read — скидає unreadCounts ✅ NEW v2.9.7
+//   update({ 'lastMessage.read': true, 'unreadCounts.{readerUsername}': 0 })
 
-// Socket: mark_read → batch update sent|delivered→read для чужих повідомлень
-//   Два окремих запити (sent і delivered) → фільтр в JS → emit message_status_update
-
-// Socket emit: 'message_status_update' → { messageId, status }
+// Socket: request_history_more → load_history_more ✅ NEW v2.9.7
+// { chatId, before: timestamp } → startAfter(beforeTs).limit(50)
+// Обробляє різні формати before: ISO string, {_seconds}, Date
 ```
 
 ---
@@ -137,10 +148,10 @@ JWT: access token — 7 днів, refresh token — 30 днів
 bcrypt rounds: 12
 
 Захищені ендпоінти (verifyJWT):
-  POST /upload, POST /upload-audio
+  POST /upload, POST /upload-audio, POST /upload-file ✅ NEW v2.9.7
   GET  /search_users
   POST /get_or_create_dm, GET /get_user_chats
-  POST /update_profile ✅ NEW v2.6.0
+  POST /update_profile
 ```
 
 ---
@@ -170,24 +181,25 @@ AppSizes.avatarRadiusMedium // 27
 
 ```
 users/{username}
-  username, displayName ✅ NEW v2.6.0
+  username, displayName
   avatarUrl, passwordHash, createdAt
-  phone, birthday, birthdayVisible, onlineVisible ✅ NEW v2.6.0
-  [ПЛАН Ф2] online, lastSeen
+  phone, birthday, birthdayVisible, onlineVisible
 
 chats/{chatId}
   type: "dm"
   participants: [username1, username2]
-  participantNames: { username1: displayName1 } ✅ NEW v2.6.0
+  participantNames: { username1: displayName1 }
   lastMessage: { text, sender, timestamp, read }
+  unreadCounts: { username1: 0, username2: 3 }  ✅ NEW v2.9.7
 
 chats/{chatId}/messages/{messageId}
   text, sender, senderAvatar, type
   timestamp, read, edited, editedAt
-  status: "sent"|"delivered"|"read" ✅ NEW v2.6.3
+  status: "sent"|"delivered"|"read"
   replyTo: { id, text, sender }
   reactions: { "❤️": ["user1"] }
   audioUrl, audioDuration, imageUrl
+  fileUrl, fileName, fileSize  ✅ NEW v2.9.7
 
 fcm_tokens/{token}
   username, updatedAt
@@ -201,7 +213,7 @@ fcm_tokens/{token}
 | Подія | Дані |
 |-------|------|
 | `join_chat` | chatId → auto delivered update |
-| `send_message` | { chatId, text, type, ... } |
+| `send_message` | { chatId, text, type, fileUrl?, fileName?, fileSize?, ... } |
 | `mark_read` | { chatId, readerUsername } |
 | `delete_message` | { messageId, chatId } |
 | `edit_message` | { messageId, newText, chatId } |
@@ -209,13 +221,15 @@ fcm_tokens/{token}
 | `typing` | { chatId } |
 | `register_token` | { token } |
 | `request_history` | chatId |
+| `request_history_more` | { chatId, before: timestamp } ✅ NEW |
 
 ### Сервер → Клієнт
 | Подія | Дані |
 |-------|------|
 | `receive_message` | messageData (з status: 'sent') |
-| `message_status_update` | { messageId, status } ✅ NEW |
+| `message_status_update` | { messageId, status } |
 | `load_history` | message[] |
+| `load_history_more` | message[] ✅ NEW |
 | `message_deleted` | messageId |
 | `message_edited` | { messageId, newText } |
 | `reaction_updated` | { messageId, reactions } |
@@ -231,27 +245,31 @@ fcm_tokens/{token}
 | POST | `/refresh` | ❌ | { refreshToken } → { token } |
 | POST | `/upload` | ✅ | фото → { url } |
 | POST | `/upload-audio` | ✅ | аудіо → { url } |
+| POST | `/upload-file` | ✅ | файл (PDF/DOCX/ZIP/TXT) → { url, fileName, fileSize } ✅ NEW |
 | GET | `/search_users?q=&myUsername=` | ✅ | пошук |
 | POST | `/get_or_create_dm` | ✅ | → chat |
 | GET | `/get_user_chats?username=` | ✅ | список чатів (Windows) |
-| POST | `/update_profile` | ✅ | displayName, phone, birthday... ✅ NEW |
-| GET | `/accounts_by_phone?phone=` | ❌ | акаунти по телефону ✅ NEW |
+| POST | `/update_profile` | ✅ | displayName, phone, birthday... |
+| GET | `/accounts_by_phone?phone=` | ❌ | акаунти по телефону |
 | GET | `/ping` | ❌ | health check |
 
 ---
 
-## ✅ ЩО РЕАЛІЗОВАНО (v2.6.8)
+## ✅ ЩО РЕАЛІЗОВАНО (v2.9.7)
 
 - [x] Приватні чати (DM) — Firestore + Socket.IO
-- [x] **displayName vs username** — displayName (будь-яка мова), username (Latin, immutable) ✅ NEW
+- [x] displayName vs username
 - [x] Авторизація — username + password (bcrypt) + JWT
-- [x] **Login/Register розділено** — TabBar з двома вкладками ✅ NEW
-- [x] **AccountTab (Telegram-style)** — аватар, статус, phone, birthday, edit ✅ NEW
-- [x] **Акаунти по телефону** — suggestedAccounts при запуску ✅ NEW
-- [x] **POST /update_profile** — phone, birthday, onlineVisible, displayName ✅ NEW
-- [x] **Статуси повідомлень** ✓/✓✓/✓✓синій — sent/delivered/read ✅ NEW
-- [x] **Signal-style іконки статусів** — CustomPainter з кружечками і галочками ✅ NEW
-- [x] **Real-time статуси** — _messageStatuses cache + mark_read on receive ✅ NEW
+- [x] Login/Register розділено — TabBar
+- [x] AccountTab (Telegram-style)
+- [x] Акаунти по телефону — suggestedAccounts
+- [x] POST /update_profile
+- [x] Статуси повідомлень ✓/✓✓/✓✓синій
+- [x] Signal-style іконки статусів (CustomPainter)
+- [x] Real-time статуси — _messageStatuses cache
+- [x] **🔴 Лічильник непрочитаних** — Badge на аватарі чату ✅ NEW v2.9.7
+- [x] **📜 Пагінація повідомлень** — infinite scroll, startAfterDocument ✅ NEW v2.9.7
+- [x] **📎 Передача файлів** — PDF/DOCX/ZIP, FileBubble, Signal-style меню ✅ NEW v2.9.7
 - [x] Rate limiting + Helmet + Morgan + Joi валідація
 - [x] Socket.IO auth middleware (JWT)
 - [x] Надсилання фото (Firebase Storage)
@@ -273,11 +291,9 @@ fcm_tokens/{token}
 
 ## 🐛 ВІДОМІ ПРОБЛЕМИ / НАСТУПНІ КРОКИ
 
-- [ ] Онлайн-статус у AppBar чату ("онлайн" / "був о HH:MM") — **зараз хардкод**
-- [ ] Пагінація повідомлень — тільки останні 50
-- [ ] Групові чати
-- [ ] Шарінг файлів (PDF, DOCX, ZIP)
-- [ ] WebRTC дзвінки
+- [ ] Групові чати (4.5)
+- [ ] WebRTC дзвінки (4.6)
+- [ ] Онлайн-статус у AppBar ("онлайн" / "був о HH:MM")
 
 ---
 
@@ -306,6 +322,16 @@ fcm_tokens/{token}
    Використовуємо два окремих запити + фільтр в JS
 
 8. _messageStatuses[msgId] МАЄ пріоритет над msg['status'] з Firestore
+
+9. unreadCounts — increment/reset через Firestore FieldValue (не Socket)
+   Читається у home_screen.dart через StreamBuilder (real-time)
+
+10. Файли — перевірка по розширенню (не mimetype!) на сервері
+    multer originalname декодується: Buffer.from(name, 'latin1').toString('utf8')
+    Збереження: /storage/emulated/0/Download (Android, requestLegacyExternalStorage=true)
+
+11. Пагінація — _lastDocument встановлюється ТІЛЬКИ якщо == null (перший завантажуваний batch)
+    combined = [...messages (StreamBuilder), ..._olderMessages]
 ```
 
 ---
@@ -316,8 +342,11 @@ fcm_tokens/{token}
 Новий чат → вставити CONTEXT.md → додати ТІЛЬКИ потрібний файл:
 
 "профіль / акаунт"        → home_screen.dart
+"лічильник непрочитаних"  → home_screen.dart
 "логін / реєстрація"      → login_screen.dart
 "статуси повідомлень"     → widgets/message_bubble.dart + main.dart
+"файли / FileBubble"      → widgets/message_bubble.dart
+"пагінація"               → main.dart
 "проблема у чаті"         → main.dart
 "сервер / API"            → server/index.js
 "навігація / HomeScreen"  → home_screen.dart
