@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme.dart';
@@ -68,13 +69,10 @@ class MessageBubble extends StatefulWidget {
 class _MessageBubbleState extends State<MessageBubble> {
   bool _isExpanded = false;
 
-  // Перевіряємо чи текст довгий (грубо: >_kCollapsedLines рядків ~60 символів/рядок)
-  // Точна перевірка через TextPainter занадто дорога — використовуємо евристику
   bool _needsCollapse(String text) {
-    if (text.length < 300) return false; // Короткий текст — не ховаємо
+    if (text.length < 300) return false;
     final newlines = '\n'.allMatches(text).length;
     if (newlines >= _kCollapsedLines) return true;
-    // Приблизно: якщо текст > ~480 символів (8 рядків × ~60 симв.)
     return text.length > 480;
   }
 
@@ -173,7 +171,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                   if (widget.text.isNotEmpty) ...[
                     Text(
                       widget.text,
-                      // Якщо довгий і не розгорнутий — обрізаємо
                       maxLines: longText && !_isExpanded
                           ? _kCollapsedLines
                           : null,
@@ -187,7 +184,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                       ),
                     ),
 
-                    // Кнопка "Читати далі" / "Згорнути"
                     if (longText)
                       GestureDetector(
                         onTap: () => setState(() => _isExpanded = !_isExpanded),
@@ -292,9 +288,6 @@ class _MessageBubbleState extends State<MessageBubble> {
 
 // ══════════════════════════════════════════════════════════
 // ✓ Signal-style іконка статусу повідомлення
-// sent     = 1 кружок (контур) + галочка
-// delivered = 2 кружки (контур) + галочка
-// read     = 2 кружки (заповнені сині) + галочка
 // ══════════════════════════════════════════════════════════
 class _StatusIcon extends StatelessWidget {
   final String? status;
@@ -315,8 +308,8 @@ class _StatusIcon extends StatelessWidget {
 }
 
 class _SignalStatus extends StatelessWidget {
-  final int circles; // 1 = sent, 2 = delivered/read
-  final bool filled; // true = read (сині), false = сірі
+  final int circles;
+  final bool filled;
 
   const _SignalStatus({required this.circles, required this.filled});
 
@@ -334,31 +327,21 @@ class _SignalStatus extends StatelessWidget {
 
 class _StatusPainter extends CustomPainter {
   final int circles;
-  // filled тепер означає "read" стиль:
-  // false = сірий контур (sent/delivered)
-  // true  = синій контур БЕЗ заливки (read) — "інвертований"
   final bool filled;
 
   const _StatusPainter({required this.circles, required this.filled});
 
-  // Синій колір для "read" — колір бабл-фону відправника
   static const _blue = Color(0xFF2B5CE6);
-  // Сірий для sent/delivered
-  static const _grey = Color(0x8DFFFFFF); // білий 55%
+  static const _grey = Color(0x8DFFFFFF);
 
   @override
   void paint(Canvas canvas, Size size) {
     final r = size.height / 2;
-
-    // filled = read: синій контур + сіра заливка + синя галочка
-    // !filled = sent/delivered: сірий контур, без заливки, сіра галочка
     final strokeColor = filled ? _blue : _grey;
     final strokeWidth = filled ? 1.6 : 1.3;
 
     final fillPaint = Paint()
-      ..color = filled
-          ? const Color(0x99B0B8C8) // сіра заливка для read
-          : const Color(0xFF2B5CE6) // синя заливка для delivered
+      ..color = filled ? const Color(0x99B0B8C8) : const Color(0xFF2B5CE6)
       ..style = PaintingStyle.fill;
 
     final strokePaint = Paint()
@@ -375,7 +358,6 @@ class _StatusPainter extends CustomPainter {
 
     void drawCircle(Offset center, {double opacityMult = 1.0}) {
       canvas.drawCircle(center, r - 0.8, fillPaint);
-
       final sp = opacityMult == 1.0
           ? strokePaint
           : (Paint()
@@ -451,30 +433,158 @@ class _FileBubble extends StatelessWidget {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
   }
 
+  void _showFileOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1B1D),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Назва файлу
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _iconFor(fileName),
+                      color: const Color(0xFF2B5CE6),
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _formatSize(fileSize),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12),
+              ListTile(
+                leading: const Icon(Icons.open_in_new, color: Colors.white70),
+                title: const Text(
+                  'Відкрити',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _openFile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.download_rounded,
+                  color: Color(0xFF2B5CE6),
+                ),
+                title: const Text(
+                  'Зберегти на пристрій',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _saveFile(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openFile() async {
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final savePath = '${tmpDir.path}/$fileName';
+      await Dio().download(fileUrl, savePath);
+      final result = await OpenFilex.open(savePath);
+      if (result.type != ResultType.done) {
+        final uri = Uri.parse(fileUrl);
+        if (await canLaunchUrl(uri)) {
+          launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      }
+    } catch (_) {
+      final uri = Uri.parse(fileUrl);
+      if (await canLaunchUrl(uri)) {
+        launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    }
+  }
+
+  Future<void> _saveFile(BuildContext context) async {
+    try {
+      Directory? saveDir;
+      if (Platform.isAndroid) {
+        saveDir = Directory('/storage/emulated/0/Download');
+        if (!await saveDir.exists()) {
+          saveDir = await getExternalStorageDirectory();
+        }
+      } else {
+        saveDir = await getApplicationDocumentsDirectory();
+      }
+
+      final savePath = '${saveDir!.path}/$fileName';
+      await Dio().download(fileUrl, savePath);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Збережено: $fileName'),
+            backgroundColor: const Color(0xFF2B5CE6),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Помилка збереження'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () async {
-        try {
-          final tmpDir = await getTemporaryDirectory();
-          final savePath = '${tmpDir.path}/$fileName';
-          final dio = Dio();
-          await dio.download(fileUrl, savePath);
-          final result = await OpenFilex.open(savePath);
-          if (result.type != ResultType.done) {
-            // fallback — відкрити в браузері
-            final uri = Uri.parse(fileUrl);
-            if (await canLaunchUrl(uri)) {
-              launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          }
-        } catch (e) {
-          final uri = Uri.parse(fileUrl);
-          if (await canLaunchUrl(uri)) {
-            launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        }
-      },
+      onTap: () => _showFileOptions(context),
       child: Container(
         margin: const EdgeInsets.only(bottom: 6),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
