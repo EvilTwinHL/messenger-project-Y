@@ -10,6 +10,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/services.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 // Кількість рядків після яких показується "Читати далі"
 const int _kCollapsedLines = 8;
@@ -28,7 +31,6 @@ class MessageBubble extends StatefulWidget {
   final String? avatarUrl;
 
   /// Статус повідомлення: "sent" | "delivered" | "read"
-  /// null — fallback до старої логіки isRead
   final String? status;
   final Map? replyTo;
   final Map<String, dynamic>? reactions;
@@ -183,7 +185,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                         height: 1.3,
                       ),
                     ),
-
                     if (longText)
                       GestureDetector(
                         onTap: () => setState(() => _isExpanded = !_isExpanded),
@@ -205,7 +206,7 @@ class _MessageBubbleState extends State<MessageBubble> {
 
                   const SizedBox(height: 4),
 
-                  // Час + статус прочитання
+                  // Час + статус
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -287,7 +288,7 @@ class _MessageBubbleState extends State<MessageBubble> {
 }
 
 // ══════════════════════════════════════════════════════════
-// ✓ Signal-style іконка статусу повідомлення
+// ✓ Signal-style іконка статусу
 // ══════════════════════════════════════════════════════════
 class _StatusIcon extends StatelessWidget {
   final String? status;
@@ -395,7 +396,7 @@ class _StatusPainter extends CustomPainter {
 }
 
 // ══════════════════════════════════════════════════════════
-// 📎 FileBubble — відображення файлу в бульбашці
+// 📎 FileBubble
 // ══════════════════════════════════════════════════════════
 class _FileBubble extends StatelessWidget {
   final String fileUrl;
@@ -434,91 +435,18 @@ class _FileBubble extends StatelessWidget {
   }
 
   void _showFileOptions(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1A1B1D),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              // Назва файлу
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _iconFor(fileName),
-                      color: const Color(0xFF2B5CE6),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        fileName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _formatSize(fileSize),
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: Colors.white12),
-              ListTile(
-                leading: const Icon(Icons.open_in_new, color: Colors.white70),
-                title: const Text(
-                  'Відкрити',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _openFile();
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.download_rounded,
-                  color: Color(0xFF2B5CE6),
-                ),
-                title: const Text(
-                  'Зберегти на пристрій',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _saveFile(context);
-                },
-              ),
-            ],
-          ),
+    HapticFeedback.mediumImpact();
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        pageBuilder: (ctx, anim, _) => _FileMenuOverlay(
+          fileName: fileName,
+          fileSize: fileSize,
+          iconData: _iconFor(fileName),
+          formatSize: _formatSize,
+          onOpen: () => _openFile(),
+          onSave: () => _saveFile(ctx),
         ),
       ),
     );
@@ -545,18 +473,53 @@ class _FileBubble extends StatelessWidget {
   }
 
   Future<void> _saveFile(BuildContext context) async {
+    // Запитуємо дозвіл на Android
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      PermissionStatus status;
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+ — дозвіл на storage не потрібен
+        status = PermissionStatus.granted;
+      } else {
+        status = await Permission.storage.request();
+      }
+      if (!status.isGranted) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Немає дозволу на збереження файлів'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     try {
       Directory? saveDir;
       if (Platform.isAndroid) {
-        saveDir = Directory('/storage/emulated/0/Download');
-        if (!await saveDir.exists()) {
+        final androidInfo = await DeviceInfoPlugin().androidInfo;
+        if (androidInfo.version.sdkInt >= 29) {
           saveDir = await getExternalStorageDirectory();
+        } else {
+          saveDir = Directory('/storage/emulated/0/Download');
+          if (!await saveDir.exists()) {
+            saveDir = await getExternalStorageDirectory();
+          }
         }
       } else {
         saveDir = await getApplicationDocumentsDirectory();
       }
 
-      final savePath = '${saveDir!.path}/$fileName';
+      if (saveDir == null) throw Exception('saveDir is null');
+
+      debugPrint('[FILE SAVE] dir: ${saveDir.path}');
+      debugPrint('[FILE SAVE] file: $fileName');
+      debugPrint('[FILE SAVE] url: $fileUrl');
+
+      final savePath = '${saveDir.path}/$fileName';
       await Dio().download(fileUrl, savePath);
 
       if (context.mounted) {
@@ -568,11 +531,12 @@ class _FileBubble extends StatelessWidget {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[FILE SAVE] Error: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Помилка збереження'),
+          SnackBar(
+            content: Text('Помилка: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -631,6 +595,201 @@ class _FileBubble extends StatelessWidget {
               Icons.download_rounded,
               color: Colors.white.withOpacity(0.6),
               size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// 📋 FileMenuOverlay — Signal-style меню файлу
+// ══════════════════════════════════════════════════════════
+class _FileMenuOverlay extends StatefulWidget {
+  final String fileName;
+  final int? fileSize;
+  final IconData iconData;
+  final String Function(int?) formatSize;
+  final VoidCallback onOpen;
+  final VoidCallback onSave;
+
+  const _FileMenuOverlay({
+    required this.fileName,
+    required this.fileSize,
+    required this.iconData,
+    required this.formatSize,
+    required this.onOpen,
+    required this.onSave,
+  });
+
+  @override
+  State<_FileMenuOverlay> createState() => _FileMenuOverlayState();
+}
+
+class _FileMenuOverlayState extends State<_FileMenuOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _fade;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _fade = Tween(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeIn));
+    _scale = Tween(
+      begin: 0.85,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTextStyle(
+      style: const TextStyle(
+        decoration: TextDecoration.none,
+        color: SignalColors.textPrimary,
+        fontFamily: 'Roboto',
+      ),
+      child: Stack(
+        children: [
+          // Затемнений фон
+          GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Container(color: Colors.black.withOpacity(0.7)),
+          ),
+          // Меню по центру
+          Center(
+            child: FadeTransition(
+              opacity: _fade,
+              child: ScaleTransition(
+                scale: _scale,
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    width: 240,
+                    decoration: BoxDecoration(
+                      color: SignalColors.elevated,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Заголовок
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                          child: Row(
+                            children: [
+                              Icon(
+                                widget.iconData,
+                                color: SignalColors.primary,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.fileName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: SignalColors.textPrimary,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (widget.fileSize != null)
+                                      Text(
+                                        widget.formatSize(widget.fileSize),
+                                        style: const TextStyle(
+                                          color: SignalColors.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(color: SignalColors.divider, height: 1),
+                        _item(Icons.open_in_new, 'Відкрити', () {
+                          Navigator.of(context).pop();
+                          widget.onOpen();
+                        }),
+                        const Divider(
+                          color: SignalColors.divider,
+                          height: 1,
+                          indent: 16,
+                          endIndent: 16,
+                        ),
+                        _item(
+                          Icons.download_rounded,
+                          'Зберегти',
+                          () {
+                            Navigator.of(context).pop();
+                            widget.onSave();
+                          },
+                          color: SignalColors.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _item(
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color color = SignalColors.textPrimary,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 14),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                decoration: TextDecoration.none,
+              ),
             ),
           ],
         ),

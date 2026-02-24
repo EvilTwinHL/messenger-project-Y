@@ -1605,7 +1605,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // ── Scroll Date Overlay ──────────────────────────────
           if (_scrollDateLabel != null)
             Positioned(
-              top: 80,
+              top: 12,
               left: 0,
               right: 0,
               child: Center(
