@@ -247,6 +247,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // 🖥️ Локальний список повідомлень для Windows (де Firestore недоступний)
   // На Android/iOS використовується Firestore StreamBuilder
   final List<Map<String, dynamic>> _localMessages = [];
+  final List<Map<String, dynamic>> _olderMessages = [];
+  DocumentSnapshot? _lastDocument; // для Firebase пагінації
+  bool _isLoadingMore = false;
+  bool _hasMoreMessages = true;
 
   // Локальний кеш статусів — перекриває дані з Firestore/localMessages
   // Оновлюється через socket 'message_status_update' в реалтаймі
@@ -263,7 +267,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _checkShorebirdSilent();
     // Scroll listener для date overlay
     _scrollController.addListener(() {
-      // Викличеться з buildMessagesList через захоплений messages список
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 300) {
+        _loadMoreMessages();
+      }
     });
     textController.addListener(() {
       final hasText = textController.text.trim().isNotEmpty;
@@ -284,6 +291,47 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       _logToServer("Shorebird error: $e");
+    }
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMoreMessages) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      if (AppConfig.firebaseAvailable) {
+        if (_lastDocument == null) return;
+        final snap = await FirebaseFirestore.instance
+            .collection('chats')
+            .doc(widget.chatId)
+            .collection('messages')
+            .orderBy('timestamp', descending: true)
+            .startAfterDocument(_lastDocument!)
+            .limit(50)
+            .get();
+
+        if (snap.docs.isEmpty) {
+          setState(() => _hasMoreMessages = false);
+          return;
+        }
+        _lastDocument = snap.docs.last;
+        final older = snap.docs.map((doc) {
+          final d = doc.data();
+          d['id'] = doc.id;
+          return d;
+        }).toList();
+        setState(() => _olderMessages.addAll(older));
+      } else {
+        // Windows: просимо сервер
+        if (_localMessages.isEmpty) return;
+        final oldest = _localMessages.last['timestamp'];
+        _socketSvc.socket.emit('request_history_more', {
+          'chatId': widget.chatId,
+          'before': oldest,
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -383,6 +431,19 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
         });
+      }
+    });
+
+    _socketSvc.on('load_history_more', (data) {
+      if (!AppConfig.firebaseAvailable && mounted) {
+        final list = (data as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        if (list.isEmpty) {
+          setState(() => _hasMoreMessages = false);
+          return;
+        }
+        setState(() => _localMessages.addAll(list.reversed));
       }
     });
 
@@ -1288,13 +1349,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
 
                   final docs = snapshot.data!.docs;
+                  if (docs.isNotEmpty && _lastDocument == null) {
+                    _lastDocument = docs.last;
+                  }
                   final messages = docs.map((doc) {
                     final data = doc.data() as Map<String, dynamic>;
                     data['id'] = doc.id;
                     return data;
                   }).toList();
 
-                  return _buildMessagesList(messages);
+                  final combined = [...messages, ..._olderMessages];
+                  return _buildMessagesList(combined);
+                  ;
                 },
               ),
             ),
@@ -1333,7 +1399,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   (_showVoiceConfirm ? 70 : 0),
             ),
             itemCount:
-                messages.length + (_isTyping && _typingUser != null ? 1 : 0),
+                messages.length +
+                (_isTyping && _typingUser != null ? 1 : 0) +
+                (_isLoadingMore ? 1 : 0),
             itemBuilder: (context, index) {
               final hasTyping = _isTyping && _typingUser != null;
 
@@ -1342,6 +1410,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   padding: const EdgeInsets.only(top: 8),
                   // DM — без аватара, тільки бульбашка
                   child: TypingIndicator(username: _typingUser!, isDM: true),
+                );
+              }
+
+              if (_isLoadingMore &&
+                  index == messages.length + (hasTyping ? 1 : 0)) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: SignalColors.primary,
+                      strokeWidth: 2,
+                    ),
+                  ),
                 );
               }
 
