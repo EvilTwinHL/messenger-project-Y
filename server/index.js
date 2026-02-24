@@ -659,6 +659,17 @@ io.on('connection', async (socket) => {
       }
     });
 
+// Збільшуємо лічильник непрочитаних для кожного отримувача
+    const chatSnap = await db.collection('chats').doc(chatId).get();
+    const participants = (chatSnap.data()?.participants || []).filter(u => u !== sender);
+    const incrementData = {};
+    participants.forEach(u => {
+      incrementData[`unreadCounts.${u}`] = admin.firestore.FieldValue.increment(1);
+    });
+    if (Object.keys(incrementData).length > 0) {
+      await db.collection('chats').doc(chatId).update(incrementData);
+    }
+
     const savedMessage = { id: docRef.id, ...messageData, timestamp: new Date().toISOString() };
     io.to(chatId).emit('receive_message', savedMessage);
 
@@ -774,7 +785,11 @@ io.on('connection', async (socket) => {
         });
       }
 
-      await db.collection('chats').doc(chatId).update({ 'lastMessage.read': true });
+      await db.collection('chats').doc(chatId).update({
+        'lastMessage.read': true,
+        [`unreadCounts.${readerUsername}`]: 0,
+      });
+      
     } catch (err) {
       console.error('[mark_read] Error:', err);
     }
