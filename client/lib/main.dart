@@ -1568,7 +1568,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             child: MessageBubble(
                               text:
                                   msg['type'] == 'image' ||
-                                      msg['type'] == 'voice'
+                                      msg['type'] == 'voice' ||
+                                      msg['type'] == 'file'
                                   ? ''
                                   : (msg['text'] ?? ''),
                               imageUrl: msg['type'] == 'image'
@@ -1588,6 +1589,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               currentUsername: myName,
                               onReactionTap: _addReaction,
                               edited: msg['edited'] == true,
+                              fileUrl: msg['fileUrl'] as String?,
+                              fileName: msg['fileName'] as String?,
+                              fileSize: msg['fileSize'] as int?,
                             ),
                           ),
                         );

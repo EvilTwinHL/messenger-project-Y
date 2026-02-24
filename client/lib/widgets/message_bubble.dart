@@ -6,6 +6,9 @@ import '../audio_player_widget.dart';
 import 'reply_preview.dart';
 import 'reaction_widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 
 // Кількість рядків після яких показується "Читати далі"
 const int _kCollapsedLines = 8;
@@ -452,11 +455,25 @@ class _FileBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () async {
-        // Відкриваємо через браузер / системний переглядач
-        final uri = Uri.parse(fileUrl);
-        // ignore: deprecated_member_use
-        if (await canLaunchUrl(uri))
-          launchUrl(uri, mode: LaunchMode.externalApplication);
+        try {
+          final tmpDir = await getTemporaryDirectory();
+          final savePath = '${tmpDir.path}/$fileName';
+          final dio = Dio();
+          await dio.download(fileUrl, savePath);
+          final result = await OpenFilex.open(savePath);
+          if (result.type != ResultType.done) {
+            // fallback — відкрити в браузері
+            final uri = Uri.parse(fileUrl);
+            if (await canLaunchUrl(uri)) {
+              launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          }
+        } catch (e) {
+          final uri = Uri.parse(fileUrl);
+          if (await canLaunchUrl(uri)) {
+            launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        }
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 6),

@@ -349,7 +349,8 @@ app.post('/upload-file', verifyJWT, uploadLimiter, upload.single('file'), async 
     const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
 
     fs.unlinkSync(req.file.path);
-    res.json({ url, fileName: req.file.originalname, fileSize: req.file.size });
+    const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    res.json({ url, fileName: originalName, fileSize: req.file.size });
 
   } catch (err) {
     console.error('[upload-file] Error:', err);
