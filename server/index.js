@@ -552,6 +552,144 @@ app.get('/accounts_by_phone', async (req, res) => {
 });
 
 // ==========================================
+// ==========================================
+// 👥 ГРУПОВІ ЧАТИ
+// ==========================================
+
+// POST /create_group — створення групи
+app.post('/create_group', verifyJWT, async (req, res) => {
+  const { name, members } = req.body;
+  const creator = req.user.username;
+
+  if (!name || typeof name !== 'string' || name.trim().length < 1) {
+    return res.status(400).json({ error: 'Назва групи обов\'язкова' });
+  }
+  if (!Array.isArray(members) || members.length < 1) {
+    return res.status(400).json({ error: 'Мінімум 1 учасник' });
+  }
+
+  try {
+    const participants = [...new Set([creator, ...members])];
+
+    // Збираємо displayName для всіх учасників
+    const participantNames = {};
+    const usersSnap = await db.collection('users')
+      .where('username', 'in', participants.slice(0, 10))
+      .get();
+    usersSnap.docs.forEach(doc => {
+      const d = doc.data();
+      participantNames[d.username] = d.displayName || d.username;
+    });
+
+    const newGroup = {
+      type: 'group',
+      name: name.trim(),
+      participants,
+      participantNames,
+      admins: [creator],
+      createdBy: creator,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastMessage: null,
+      unreadCounts: {},
+    };
+
+    const docRef = await db.collection('chats').add(newGroup);
+    res.json({ id: docRef.id, ...newGroup });
+  } catch (err) {
+    console.error('[create_group] Error:', err);
+    res.status(500).json({ error: 'Помилка створення групи' });
+  }
+});
+
+// POST /group_update — оновлення назви/аватара групи (тільки адмін)
+app.post('/group_update', verifyJWT, async (req, res) => {
+  const { chatId, name, avatarUrl } = req.body;
+  const username = req.user.username;
+  if (!chatId) return res.status(400).json({ error: 'chatId обов\'язковий' });
+
+  try {
+    const chatRef = db.collection('chats').doc(chatId);
+    const chatDoc = await chatRef.get();
+    if (!chatDoc.exists) return res.status(404).json({ error: 'Чат не знайдено' });
+    const data = chatDoc.data();
+    if (data.type !== 'group') return res.status(400).json({ error: 'Не груповий чат' });
+    if (!(data.admins || []).includes(username)) {
+      return res.status(403).json({ error: 'Тільки адміни можуть редагувати групу' });
+    }
+
+    const updates = {};
+    if (name && name.trim()) updates.name = name.trim();
+    if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
+
+    await chatRef.update(updates);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[group_update] Error:', err);
+    res.status(500).json({ error: 'Помилка оновлення групи' });
+  }
+});
+
+// POST /group_add_member — додати учасника (тільки адмін)
+app.post('/group_add_member', verifyJWT, async (req, res) => {
+  const { chatId, newMember } = req.body;
+  const username = req.user.username;
+  if (!chatId || !newMember) return res.status(400).json({ error: 'chatId і newMember обов\'язкові' });
+
+  try {
+    const chatRef = db.collection('chats').doc(chatId);
+    const chatDoc = await chatRef.get();
+    if (!chatDoc.exists) return res.status(404).json({ error: 'Чат не знайдено' });
+    const data = chatDoc.data();
+    if (!(data.admins || []).includes(username)) {
+      return res.status(403).json({ error: 'Тільки адміни можуть додавати учасників' });
+    }
+    if ((data.participants || []).includes(newMember)) {
+      return res.status(400).json({ error: 'Користувач вже в групі' });
+    }
+
+    // Отримуємо displayName нового учасника
+    const userSnap = await db.collection('users').where('username', '==', newMember).get();
+    const newDisplayName = userSnap.empty ? newMember : (userSnap.docs[0].data().displayName || newMember);
+
+    await chatRef.update({
+      participants: admin.firestore.FieldValue.arrayUnion(newMember),
+      [`participantNames.${newMember}`]: newDisplayName,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[group_add_member] Error:', err);
+    res.status(500).json({ error: 'Помилка додавання учасника' });
+  }
+});
+
+// POST /group_remove_member — видалити учасника (адмін або сам себе)
+app.post('/group_remove_member', verifyJWT, async (req, res) => {
+  const { chatId, member } = req.body;
+  const username = req.user.username;
+  if (!chatId || !member) return res.status(400).json({ error: 'chatId і member обов\'язкові' });
+
+  try {
+    const chatRef = db.collection('chats').doc(chatId);
+    const chatDoc = await chatRef.get();
+    if (!chatDoc.exists) return res.status(404).json({ error: 'Чат не знайдено' });
+    const data = chatDoc.data();
+
+    // Можна видалити: себе або якщо адмін
+    if (member !== username && !(data.admins || []).includes(username)) {
+      return res.status(403).json({ error: 'Недостатньо прав' });
+    }
+
+    await chatRef.update({
+      participants: admin.firestore.FieldValue.arrayRemove(member),
+      admins: admin.firestore.FieldValue.arrayRemove(member),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[group_remove_member] Error:', err);
+    res.status(500).json({ error: 'Помилка видалення учасника' });
+  }
+});
+
 // 🚀 SOCKET.IO СЕРВЕР
 // ==========================================
 const server = http.createServer(app);
@@ -735,7 +873,7 @@ io.on('connection', async (socket) => {
 
     await db.collection('chats').doc(chatId).update({
       lastMessage: {
-        text: type === 'image' ? '📷 Фото' : (type === 'voice' ? '🎤 Голосове' : text),
+        text: type === 'image' ? '📷 Фото' : type === 'voice' ? '🎤 Голосове' : type === 'file' ? `📎 ${data.fileName || 'Файл'}` : text,
         sender,
         timestamp: new Date().toISOString(),
         read: false
@@ -789,8 +927,13 @@ io.on('connection', async (socket) => {
 
       if (recipients.length === 0) return;
 
-      // Беремо displayName відправника для красивого push-заголовку
+      // Для групи — заголовок push = "Назва групи"
+      // Для DM — заголовок = displayName відправника
+      const isGroup = chatData.type === 'group';
       const senderDisplayName = (chatData.participantNames || {})[sender] || sender;
+      const pushTitle = isGroup
+        ? `${chatData.name || 'Група'}: ${senderDisplayName}`
+        : senderDisplayName;
 
       const tokensSnap = await db.collection("fcm_tokens")
         .where("username", "in", recipients).get();
@@ -799,8 +942,8 @@ io.on('connection', async (socket) => {
       if (tokens.length > 0) {
         const payload = {
           notification: {
-            title: `${senderDisplayName}`,
-            body: type === 'image' ? '📷 Фото' : type === 'voice' ? '🎤 Голосове' : text,
+            title: `${pushTitle}`,
+            body: type === 'image' ? '📷 Фото' : type === 'voice' ? '🎤 Голосове' : type === 'file' ? '📎 Файл' : text,
           },
           data: { chatId, sender },
           tokens,
@@ -957,4 +1100,5 @@ const shutdown = () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-//server v2.9.7
+
+//server v2.10.0
