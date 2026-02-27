@@ -194,8 +194,13 @@ class GlassBox extends StatelessWidget {
 class ChatScreen extends StatefulWidget {
   final String username;
   final String? avatarUrl;
-  final String chatId; // 🔥 ID Кімнати
-  final String otherUsername; // 🔥 Ім'я співрозмовника
+  final String chatId;
+  final String
+  otherUsername; // DM: username співрозмовника / Group: назва групи
+  final bool isGroup;
+  final String? groupName;
+  final List<String>? groupParticipants;
+  final List<String>? groupAdmins;
 
   const ChatScreen({
     super.key,
@@ -203,6 +208,10 @@ class ChatScreen extends StatefulWidget {
     required this.chatId,
     required this.otherUsername,
     this.avatarUrl,
+    this.isGroup = false,
+    this.groupName,
+    this.groupParticipants,
+    this.groupAdmins,
   });
 
   @override
@@ -219,6 +228,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isUpdateAvailable = false;
 
   late String myName;
+
+  bool get _isAdmin =>
+      widget.isGroup && (widget.groupAdmins ?? []).contains(myName);
   bool _isTyping = false;
   String? _typingUser;
   Timer? _typingTimer;
@@ -998,7 +1010,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (isMe) _startEditingMessage(message);
               break;
             case 'delete':
-              _showDeleteConfirmDialog(msgId);
+              // Адмін може видаляти будь-яке повідомлення в групі
+              if (isMe || _isAdmin) _showDeleteConfirmDialog(msgId);
               break;
           }
         },
@@ -1125,11 +1138,11 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.redAccent,
                           onTap: () {
                             Navigator.of(ctx).pop();
-                            // Future.delayed надійніше за addPostFrameCallback після анімації закриття
                             Future.delayed(
                               const Duration(milliseconds: 300),
                               () {
-                                if (mounted) _showDeleteConfirmDialog(msgId);
+                                if (mounted && (isMe || _isAdmin))
+                                  _showDeleteConfirmDialog(msgId);
                               },
                             );
                           },
@@ -1248,6 +1261,96 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  // ──────────────────────────────────────────────────────
+  // 👥 ІНФО ГРУПИ (bottom sheet)
+  // ──────────────────────────────────────────────────────
+  void _showGroupInfoSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: SignalColors.elevated,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        maxChildSize: 0.85,
+        minChildSize: 0.4,
+        expand: false,
+        builder: (_, scrollCtrl) => Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: SignalColors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Аватар і назва групи
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: _avatarColor(widget.groupName ?? ''),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.group, color: Colors.white, size: 32),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              widget.groupName ?? '',
+              style: const TextStyle(
+                color: SignalColors.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              '${widget.groupParticipants?.length ?? 0} учасників',
+              style: const TextStyle(
+                color: SignalColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Divider(color: SignalColors.divider, height: 1),
+            // Список учасників
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount: widget.groupParticipants?.length ?? 0,
+                itemBuilder: (_, i) {
+                  final uname = widget.groupParticipants![i];
+                  final isMe = uname == myName;
+                  final colors = SignalColors.avatarColorsFor(uname);
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: colors[0],
+                      child: Text(
+                        uname[0].toUpperCase(),
+                        style: TextStyle(
+                          color: colors[1],
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      isMe ? '$uname (ви)' : uname,
+                      style: const TextStyle(color: SignalColors.textPrimary),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _socketSvc.dispose();
@@ -1273,44 +1376,75 @@ class _ChatScreenState extends State<ChatScreen> {
           icon: const Icon(Icons.arrow_back, color: SignalColors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Row(
-          children: [
-            // Аватар співрозмовника
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: _avatarColor(widget.otherUsername),
-              child: Text(
-                widget.otherUsername.isNotEmpty
-                    ? widget.otherUsername[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(
-                  fontSize: 15,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.otherUsername,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: SignalColors.textPrimary,
-                    fontWeight: FontWeight.w600,
+        title: GestureDetector(
+          onTap: widget.isGroup ? _showGroupInfoSheet : null,
+          child: Row(
+            children: [
+              // Аватар
+              widget.isGroup
+                  ? Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: _avatarColor(
+                          widget.groupName ?? widget.otherUsername,
+                        ),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.group,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    )
+                  : CircleAvatar(
+                      radius: 18,
+                      backgroundColor: _avatarColor(widget.otherUsername),
+                      child: Text(
+                        widget.otherUsername.isNotEmpty
+                            ? widget.otherUsername[0].toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.isGroup
+                        ? (widget.groupName ?? widget.otherUsername)
+                        : widget.otherUsername,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: SignalColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                // Онлайн-статус (заглушка, буде real-time у Фазі 2)
-                const Text(
-                  'онлайн',
-                  style: TextStyle(fontSize: 12, color: SignalColors.primary),
-                ),
-              ],
-            ),
-          ],
+                  widget.isGroup
+                      ? Text(
+                          '${widget.groupParticipants?.length ?? 0} учасників',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: SignalColors.textSecondary,
+                          ),
+                        )
+                      : const Text(
+                          'онлайн',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: SignalColors.primary,
+                          ),
+                        ),
+                ],
+              ),
+            ],
+          ),
         ),
         actions: [
           // 📹 Відеодзвінок
@@ -1353,7 +1487,23 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             color: SignalColors.surface,
             onSelected: (v) {
-              if (v == 'search') {
+              if (v == 'settings') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => GroupSettingsScreen(
+                      chatId: widget.chatId,
+                      groupName: widget.groupName ?? widget.otherUsername,
+                      groupParticipants: List<String>.from(
+                        widget.groupParticipants ?? [],
+                      ),
+                      groupAdmins: List<String>.from(widget.groupAdmins ?? []),
+                      myUsername: myName,
+                      myAvatarUrl: widget.avatarUrl,
+                    ),
+                  ),
+                );
+              } else if (v == 'search') {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Пошук по чату — незабаром')),
                 );
@@ -1368,6 +1518,24 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             },
             itemBuilder: (_) => [
+              if (widget.isGroup)
+                const PopupMenuItem(
+                  value: 'settings',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.settings_outlined,
+                        color: SignalColors.primary,
+                        size: 18,
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Налаштування групи',
+                        style: TextStyle(color: SignalColors.textPrimary),
+                      ),
+                    ],
+                  ),
+                ),
               const PopupMenuItem(
                 value: 'search',
                 child: Row(
@@ -1508,7 +1676,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 return Padding(
                   padding: const EdgeInsets.only(top: 8),
                   // DM — без аватара, тільки бульбашка
-                  child: TypingIndicator(username: _typingUser!, isDM: true),
+                  child: TypingIndicator(
+                    username: _typingUser!,
+                    isDM: !widget.isGroup,
+                  ),
                 );
               }
 
@@ -1528,6 +1699,8 @@ class _ChatScreenState extends State<ChatScreen> {
               final msgIndex = hasTyping ? index - 1 : index;
               final msg = messages[msgIndex];
               final isMe = msg['sender'] == myName;
+              // В груповому чаті показуємо ім'я відправника над бульбашкою
+              final showSenderName = widget.isGroup && !isMe;
 
               bool showDateSeparator = false;
               if (msgIndex == messages.length - 1) {
@@ -1565,33 +1738,56 @@ class _ChatScreenState extends State<ChatScreen> {
                           onLongPress: () => _showContextMenu(context, msg),
                           child: Container(
                             key: key,
-                            child: MessageBubble(
-                              text:
-                                  msg['type'] == 'image' ||
-                                      msg['type'] == 'voice' ||
-                                      msg['type'] == 'file'
-                                  ? ''
-                                  : (msg['text'] ?? ''),
-                              imageUrl: msg['type'] == 'image'
-                                  ? msg['text']
-                                  : null,
-                              audioUrl: msg['audioUrl'],
-                              audioDuration: msg['audioDuration'],
-                              sender: msg['sender'] ?? 'Anon',
-                              isMe: isMe,
-                              timestamp: msg['timestamp'],
-                              status:
-                                  _messageStatuses[msgId] ??
-                                  msg['status'] as String?,
-                              replyTo: msg['replyTo'],
-                              reactions: msg['reactions'],
-                              messageId: msgId,
-                              currentUsername: myName,
-                              onReactionTap: _addReaction,
-                              edited: msg['edited'] == true,
-                              fileUrl: msg['fileUrl'] as String?,
-                              fileName: msg['fileName'] as String?,
-                              fileSize: msg['fileSize'] as int?,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Ім'я відправника в груповому чаті
+                                if (showSenderName)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      left: 14,
+                                      bottom: 2,
+                                    ),
+                                    child: Text(
+                                      msg['sender'] ?? '',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: SignalColors.avatarColorsFor(
+                                          msg['sender'] ?? '',
+                                        )[0],
+                                      ),
+                                    ),
+                                  ),
+                                MessageBubble(
+                                  text:
+                                      msg['type'] == 'image' ||
+                                          msg['type'] == 'voice' ||
+                                          msg['type'] == 'file'
+                                      ? ''
+                                      : (msg['text'] ?? ''),
+                                  imageUrl: msg['type'] == 'image'
+                                      ? msg['text']
+                                      : null,
+                                  audioUrl: msg['audioUrl'],
+                                  audioDuration: msg['audioDuration'],
+                                  sender: msg['sender'] ?? 'Anon',
+                                  isMe: isMe,
+                                  timestamp: msg['timestamp'],
+                                  status:
+                                      _messageStatuses[msgId] ??
+                                      msg['status'] as String?,
+                                  replyTo: msg['replyTo'],
+                                  reactions: msg['reactions'],
+                                  messageId: msgId,
+                                  currentUsername: myName,
+                                  onReactionTap: _addReaction,
+                                  edited: msg['edited'] == true,
+                                  fileUrl: msg['fileUrl'] as String?,
+                                  fileName: msg['fileName'] as String?,
+                                  fileSize: msg['fileSize'] as int?,
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -1964,6 +2160,903 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: Colors.white),
         onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// ⚙️ НАЛАШТУВАННЯ ГРУПИ
+// ══════════════════════════════════════════════════════════
+class GroupSettingsScreen extends StatefulWidget {
+  final String chatId;
+  final String groupName;
+  final List<String> groupParticipants;
+  final List<String> groupAdmins;
+  final String myUsername;
+  final String? myAvatarUrl;
+
+  const GroupSettingsScreen({
+    super.key,
+    required this.chatId,
+    required this.groupName,
+    required this.groupParticipants,
+    required this.groupAdmins,
+    required this.myUsername,
+    this.myAvatarUrl,
+  });
+
+  @override
+  State<GroupSettingsScreen> createState() => _GroupSettingsScreenState();
+}
+
+class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
+  late String _groupName;
+  late List<String> _participants;
+  late List<String> _admins;
+  String? _groupAvatarUrl;
+  bool _saving = false;
+
+  bool get _isAdmin => _admins.contains(widget.myUsername);
+
+  @override
+  void initState() {
+    super.initState();
+    _groupName = widget.groupName;
+    _participants = List.from(widget.groupParticipants);
+    _admins = List.from(widget.groupAdmins);
+    // Завантажуємо актуальні дані з Firestore
+    _loadGroupData();
+  }
+
+  Future<void> _loadGroupData() async {
+    if (!AppConfig.firebaseAvailable) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
+      if (!doc.exists || !mounted) return;
+      final data = doc.data()!;
+      setState(() {
+        _groupName = (data['name'] as String?) ?? _groupName;
+        _participants = List<String>.from(
+          data['participants'] ?? _participants,
+        );
+        _admins = List<String>.from(data['admins'] ?? _admins);
+        _groupAvatarUrl = data['avatarUrl'] as String?;
+      });
+    } catch (_) {}
+  }
+
+  // ── Змінити аватар групи ──────────────────────────────
+  Future<void> _pickAndUploadGroupAvatar() async {
+    if (!_isAdmin) return;
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+    if (image == null) return;
+    setState(() => _saving = true);
+    try {
+      final token = await AuthService.getToken();
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('${AppConfig.serverUrl}/upload'),
+      );
+      req.headers['Authorization'] = 'Bearer ${token ?? ''}';
+      req.files.add(await http.MultipartFile.fromPath('image', image.path));
+      final resp = await req.send();
+      if (resp.statusCode == 200) {
+        final body = await resp.stream.bytesToString();
+        final url = (jsonDecode(body) as Map)['url'] as String?;
+        if (url != null) {
+          await _serverUpdate({'avatarUrl': url});
+          setState(() => _groupAvatarUrl = url);
+        }
+      }
+    } catch (e) {
+      _showSnack('Помилка: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ── Перейменувати групу ───────────────────────────────
+  void _showRenameSheet() {
+    if (!_isAdmin) return;
+    final ctrl = TextEditingController(text: _groupName);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SignalColors.elevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          24,
+          24,
+          24,
+          MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Назва групи',
+              style: TextStyle(
+                color: SignalColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              style: const TextStyle(color: SignalColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Введіть назву...',
+                hintStyle: const TextStyle(color: SignalColors.textSecondary),
+                filled: true,
+                fillColor: SignalColors.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: SignalColors.primary,
+                    width: 1.5,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () async {
+                  final name = ctrl.text.trim();
+                  if (name.isEmpty) return;
+                  Navigator.pop(ctx);
+                  await _serverUpdate({'name': name});
+                  setState(() => _groupName = name);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SignalColors.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'Зберегти',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Додати учасника ──────────────────────────────────
+  void _showAddMemberSheet() {
+    if (!_isAdmin) return;
+    final searchCtrl = TextEditingController();
+    List<Map<String, dynamic>> results = [];
+    bool searching = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SignalColors.elevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (_, scrollCtrl) => Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: SignalColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Додати учасника',
+                  style: TextStyle(
+                    color: SignalColors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: TextField(
+                  controller: searchCtrl,
+                  autofocus: true,
+                  style: const TextStyle(color: SignalColors.textPrimary),
+                  onChanged: (q) async {
+                    if (q.isEmpty) {
+                      setS(() => results = []);
+                      return;
+                    }
+                    setS(() => searching = true);
+                    try {
+                      final token = await AuthService.getToken();
+                      final res = await http.get(
+                        Uri.parse(
+                          '${AppConfig.serverUrl}/search_users?q=${Uri.encodeComponent(q)}&myUsername=${widget.myUsername}',
+                        ),
+                        headers: {'Authorization': 'Bearer ${token ?? ''}'},
+                      );
+                      if (res.statusCode == 200) {
+                        final all = (jsonDecode(res.body) as List)
+                            .map((e) => Map<String, dynamic>.from(e as Map))
+                            .where(
+                              (u) => !_participants.contains(u['username']),
+                            )
+                            .toList();
+                        setS(() => results = all);
+                      }
+                    } catch (_) {
+                    } finally {
+                      setS(() => searching = false);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Пошук...',
+                    hintStyle: const TextStyle(
+                      color: SignalColors.textSecondary,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                      color: SignalColors.textSecondary,
+                    ),
+                    filled: true,
+                    fillColor: SignalColors.surface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: searching
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          color: SignalColors.primary,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: scrollCtrl,
+                        itemCount: results.length,
+                        itemBuilder: (_, i) {
+                          final u = results[i];
+                          final uname = u['username'] as String;
+                          final dname = (u['displayName'] as String?) ?? uname;
+                          final colors = SignalColors.avatarColorsFor(uname);
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: colors[0],
+                              child: Text(
+                                dname[0].toUpperCase(),
+                                style: TextStyle(
+                                  color: colors[1],
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              dname,
+                              style: const TextStyle(
+                                color: SignalColors.textPrimary,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '@$uname',
+                              style: const TextStyle(
+                                color: SignalColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: const Icon(
+                              Icons.person_add_outlined,
+                              color: SignalColors.primary,
+                            ),
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              await _addMember(uname);
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addMember(String username) async {
+    setState(() => _saving = true);
+    try {
+      final token = await AuthService.getToken();
+      final res = await http.post(
+        Uri.parse('${AppConfig.serverUrl}/group_add_member'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${token ?? ''}',
+        },
+        body: jsonEncode({'chatId': widget.chatId, 'newMember': username}),
+      );
+      if (res.statusCode == 200) {
+        setState(() => _participants.add(username));
+        _showSnack('$username доданий до групи');
+      } else {
+        _showSnack('Помилка: ${jsonDecode(res.body)['error']}');
+      }
+    } catch (e) {
+      _showSnack('Помилка: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ── Видалити учасника ─────────────────────────────────
+  Future<void> _removeMember(String username) async {
+    final isSelf = username == widget.myUsername;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SignalColors.elevated,
+        title: Text(
+          isSelf ? 'Вийти з групи?' : 'Видалити $username?',
+          style: const TextStyle(color: SignalColors.textPrimary),
+        ),
+        content: Text(
+          isSelf
+              ? 'Ви більше не матимете доступу до цього чату.'
+              : 'Учасник буде видалений з групи.',
+          style: const TextStyle(color: SignalColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Скасувати'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              isSelf ? 'Вийти' : 'Видалити',
+              style: const TextStyle(color: SignalColors.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _saving = true);
+    try {
+      final token = await AuthService.getToken();
+      final res = await http.post(
+        Uri.parse('${AppConfig.serverUrl}/group_remove_member'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${token ?? ''}',
+        },
+        body: jsonEncode({'chatId': widget.chatId, 'member': username}),
+      );
+      if (res.statusCode == 200) {
+        if (isSelf) {
+          // Виходимо з усіх екранів групи
+          if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+        } else {
+          setState(() {
+            _participants.remove(username);
+            _admins.remove(username);
+          });
+          _showSnack('$username видалений');
+        }
+      } else {
+        _showSnack('Помилка: ${jsonDecode(res.body)['error']}');
+      }
+    } catch (e) {
+      _showSnack('Помилка: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ── Призначити / зняти адміна ─────────────────────────
+  Future<void> _toggleAdmin(String username) async {
+    if (!_isAdmin || username == widget.myUsername) return;
+    final isCurrentAdmin = _admins.contains(username);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SignalColors.elevated,
+        title: Text(
+          isCurrentAdmin ? 'Зняти права адміна?' : 'Призначити адміном?',
+          style: const TextStyle(color: SignalColors.textPrimary),
+        ),
+        content: Text(
+          isCurrentAdmin
+              ? '$username більше не буде адміністратором групи.'
+              : '$username зможе додавати/видаляти учасників та редагувати групу.',
+          style: const TextStyle(color: SignalColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Скасувати'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: SignalColors.primary,
+            ),
+            child: Text(
+              isCurrentAdmin ? 'Зняти' : 'Призначити',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    // Оновлюємо Firestore напряму (через окремий ендпоінт або update_profile)
+    setState(() => _saving = true);
+    try {
+      if (!AppConfig.firebaseAvailable) return;
+      final newAdmins = List<String>.from(_admins);
+      if (isCurrentAdmin) {
+        newAdmins.remove(username);
+      } else {
+        newAdmins.add(username);
+      }
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .update({'admins': newAdmins});
+      setState(() => _admins = newAdmins);
+      _showSnack(
+        isCurrentAdmin ? 'Права адміна знято' : '$username тепер адміністратор',
+      );
+    } catch (e) {
+      _showSnack('Помилка: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _serverUpdate(Map<String, dynamic> fields) async {
+    try {
+      final token = await AuthService.getToken();
+      await http.post(
+        Uri.parse('${AppConfig.serverUrl}/group_update'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${token ?? ''}',
+        },
+        body: jsonEncode({'chatId': widget.chatId, ...fields}),
+      );
+    } catch (_) {}
+  }
+
+  void _showSnack(String msg) {
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+      );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SignalColors.appBackground,
+      appBar: AppBar(
+        backgroundColor: SignalColors.surface,
+        elevation: 0,
+        leadingWidth: 90,
+        leading: TextButton.icon(
+          icon: const Icon(
+            Icons.arrow_back_ios,
+            color: SignalColors.primary,
+            size: 16,
+          ),
+          label: const Text(
+            'Назад',
+            style: TextStyle(color: SignalColors.primary, fontSize: 15),
+          ),
+          onPressed: () => Navigator.pop(context),
+          style: TextButton.styleFrom(padding: const EdgeInsets.only(left: 8)),
+        ),
+        title: const Text(
+          'Налаштування групи',
+          style: TextStyle(
+            color: SignalColors.textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: SignalColors.primary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: ListView(
+        children: [
+          // ── Аватар + назва ──────────────────────────────
+          Container(
+            color: SignalColors.surface,
+            padding: const EdgeInsets.fromLTRB(16, 28, 16, 24),
+            child: Column(
+              children: [
+                // Аватар групи
+                GestureDetector(
+                  onTap: _isAdmin ? _pickAndUploadGroupAvatar : null,
+                  child: Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      CircleAvatar(
+                        radius: 52,
+                        backgroundColor: SignalColors.avatarColorsFor(
+                          _groupName,
+                        )[0],
+                        backgroundImage: _groupAvatarUrl != null
+                            ? NetworkImage(_groupAvatarUrl!)
+                            : null,
+                        child: _groupAvatarUrl == null
+                            ? const Icon(
+                                Icons.group,
+                                color: Colors.white,
+                                size: 42,
+                              )
+                            : null,
+                      ),
+                      if (_isAdmin)
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: SignalColors.primary,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: SignalColors.surface,
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                // Назва групи
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _groupName,
+                        style: const TextStyle(
+                          color: SignalColors.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    if (_isAdmin) ...[
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: _showRenameSheet,
+                        child: const Icon(
+                          Icons.edit_outlined,
+                          color: SignalColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${_participants.length} учасників',
+                  style: const TextStyle(
+                    color: SignalColors.textSecondary,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // ── Кнопки дій (тільки для адмінів) ───────────
+          if (_isAdmin)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  _actionBtn(
+                    icon: Icons.camera_alt_outlined,
+                    label: 'Фото',
+                    onTap: _pickAndUploadGroupAvatar,
+                  ),
+                  const SizedBox(width: 10),
+                  _actionBtn(
+                    icon: Icons.edit_outlined,
+                    label: 'Назва',
+                    onTap: _showRenameSheet,
+                  ),
+                  const SizedBox(width: 10),
+                  _actionBtn(
+                    icon: Icons.person_add_outlined,
+                    label: 'Додати',
+                    onTap: _showAddMemberSheet,
+                  ),
+                ],
+              ),
+            ),
+
+          const SizedBox(height: 12),
+
+          // ── Список учасників ───────────────────────────
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: SignalColors.surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+                  child: Text(
+                    'УЧАСНИКИ',
+                    style: TextStyle(
+                      color: SignalColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                ..._participants.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  final uname = entry.value;
+                  final isMe = uname == widget.myUsername;
+                  final isThisAdmin = _admins.contains(uname);
+                  final colors = SignalColors.avatarColorsFor(uname);
+
+                  return Column(
+                    children: [
+                      if (i > 0)
+                        const Divider(
+                          color: SignalColors.divider,
+                          height: 1,
+                          indent: 56,
+                        ),
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        leading: CircleAvatar(
+                          backgroundColor: colors[0],
+                          child: Text(
+                            uname[0].toUpperCase(),
+                            style: TextStyle(
+                              color: colors[1],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        title: Row(
+                          children: [
+                            Text(
+                              isMe ? '$uname (ви)' : uname,
+                              style: const TextStyle(
+                                color: SignalColors.textPrimary,
+                                fontSize: 15,
+                              ),
+                            ),
+                            if (isThisAdmin) ...[
+                              const SizedBox(width: 6),
+                              const Icon(
+                                Icons.workspace_premium,
+                                color: Colors.amber,
+                                size: 16,
+                              ),
+                            ],
+                          ],
+                        ),
+                        subtitle: Text(
+                          isThisAdmin ? 'адміністратор' : 'учасник',
+                          style: TextStyle(
+                            color: isThisAdmin
+                                ? Colors.amber.withOpacity(0.8)
+                                : SignalColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        // Дії для адміна (крім себе)
+                        trailing: _isAdmin && !isMe
+                            ? PopupMenuButton<String>(
+                                icon: const Icon(
+                                  Icons.more_vert,
+                                  color: SignalColors.textSecondary,
+                                  size: 20,
+                                ),
+                                color: SignalColors.elevated,
+                                onSelected: (v) {
+                                  if (v == 'admin') _toggleAdmin(uname);
+                                  if (v == 'remove') _removeMember(uname);
+                                },
+                                itemBuilder: (_) => [
+                                  PopupMenuItem(
+                                    value: 'admin',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          isThisAdmin
+                                              ? Icons.remove_moderator_outlined
+                                              : Icons.workspace_premium,
+                                          color: Colors.amber,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          isThisAdmin
+                                              ? 'Зняти права адміна'
+                                              : 'Призначити адміном',
+                                          style: const TextStyle(
+                                            color: SignalColors.textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'remove',
+                                    child: const Row(
+                                      children: [
+                                        Icon(
+                                          Icons.person_remove_outlined,
+                                          color: SignalColors.danger,
+                                          size: 18,
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text(
+                                          'Видалити з групи',
+                                          style: TextStyle(
+                                            color: SignalColors.danger,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : null,
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Небезпечна зона ────────────────────────────
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: SignalColors.surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: ListTile(
+              leading: const Icon(
+                Icons.exit_to_app,
+                color: SignalColors.danger,
+              ),
+              title: const Text(
+                'Вийти з групи',
+                style: TextStyle(color: SignalColors.danger),
+              ),
+              onTap: () => _removeMember(widget.myUsername),
+            ),
+          ),
+
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: SignalColors.surface,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: SignalColors.primary, size: 22),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: SignalColors.primary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
